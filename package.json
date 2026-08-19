@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "set-password": "node scripts/set-password.mjs"
   },
   "dependencies": {
     "firebase": "^12.18.0",
@@ -21,6 +22,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
+    "firebase-admin": "^14.3.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

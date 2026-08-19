@@ -37,6 +37,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# firebase admin credentials (used only by scripts/set-password.mjs)
+serviceAccountKey.json
+*serviceAccountKey*.json
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
