@@ -14,8 +14,9 @@ export interface TastingEvent {
   /** Tuotteiden oikeat nimet, indeksi = tuotteen tunniste kierroksilla ja pisteissä. */
   productNames: string[];
   participantNames: string[];
-  /** Kerta-annoksen koko, vapaamuotoinen (esim. "30 ml"). */
-  portionSize: string;
+  /** Kerta-annoksen koko, esim. { value: 30, unit: "ml" }. */
+  portionSizeValue: number;
+  portionSizeUnit: string;
   guessingEnabled: boolean;
   pairsPerParticipant: number;
   status: EventStatus;
