@@ -33,18 +33,34 @@ Päivitetty: 2026-08-20
   `.env.local` täytetty oikeilla asetuksilla (ei committoitu, gitignoressa),
   `serviceAccountKey.json` paikallaan projektin juuressa (gitignoressa). Yhteinen salasana
   asetettu `config/app`-dokumenttiin skriptillä ja **varmennettu oikeaa Firestorea vasten**
-  samalla client-SDK-kutsulla jota sovellus itse käyttää — toimi. Koodi on pushattu GitHubiin:
-  `https://github.com/merkattumarkus77/sokkotasting.git` (branch `master`).
+  samalla client-SDK-kutsulla jota sovellus itse käyttää — toimi.
+- **Sovellus on julkaistu ja toimii livenä**: **https://sokkotasting.vercel.app/**
+  - GitHub: `https://github.com/merkattumarkus77/sokkotasting.git`. Aktiivinen/tuotantohaara
+    on **`main`** (ei `master` — repo alkoi `master`-nimisenä, nimettiin myöhemmin uudelleen).
+    `origin/master` on jäänyt GitHubiin vanhana, käyttämättömänä haarana; voi poistaa myöhemmin,
+    ei kiirettä.
+  - Vercel-projektin **Domains → Branch Tracking** osoittaa nyt `main`-haaraan.
+  - **Next.js on 15.5.23**, ei 16 (ks. commit "Vaihda Next.js 16.3.1 -> 15.5.23"). `create-next-app`
+    asensi alun perin version 16.3.1 (silloinen uusin), joka aiheutti 404:n Vercelissä epäiltynä
+    syynä sen alfa-vaiheinen Build Adapters -rajapinta; downgrade tehtiin varotoimena eikä sitä
+    ole erikseen kumottu tai vahvistettu tarpeettomaksi.
+  - **Todellinen 404:n syy löytyi lopulta muualta**: Vercel-projektin
+    **Settings → Build and Output Settings → Framework Preset** oli jäänyt arvoon **"Other"**
+    (oletti, ettei projektia tunnistettu Next.js-sovellukseksi tuontivaiheessa), jolloin Vercel ei
+    kytkenyt Next.js-reititystä vaikka `next build` onnistui joka kerta täysin normaalisti. Korjattu
+    vaihtamalla arvoksi "Next.js" + Redeploy. **Muista tämä jos joskus tehdään toinen Vercel-projekti
+    samalle tai toiselle repolle** — tarkista Framework Preset heti tuonnin jälkeen.
+  - Eslint-asetus vaihdettu Next 16:n flat configista (`eslint.config.mjs`) Next 15:n
+    legacy-muotoon (`.eslintrc.json` + `next lint`), koska `eslint-config-next` ei 15.5:ssä
+    julkaise flat-config-yhteensopivaa moduulia.
 
-## Odottaa käyttäjää (ei voi tehdä puolestasi)
+## Odottaa käyttäjää / seuraava tarkistus
 
-1. **Vercel**: tuo GitHub-repo `merkattumarkus77/sokkotasting` Verceliin (kesken käyttäjällä),
-   lisää samat 6 Firebase-env-muuttujaa kuin `.env.local`:ssa (annettu käyttäjälle chatissa),
-   ja paina Deploy.
-2. Kun sivusto on livenä: käy selaimessa läpi `/jarjesta`-lomake alusta loppuun (luo
-   testitasting) ja tarkista Firebase-konsolista, että `events`- ja `participants`-kokoelmiin
-   syntyi odotetun muotoiset dokumentit. Tätä ei ole vielä tehty — vain yksittäiset Firestore-
-   kutsut (salasanatarkistus) on varmennettu, ei koko lomake+tallennus-polkua selaimessa asti.
+1. Käy selaimessa läpi `/jarjesta`-lomake alusta loppuun livenä osoitteessa
+   sokkotasting.vercel.app (luo testitasting) ja tarkista Firebase-konsolista, että `events`- ja
+   `participants`-kokoelmiin syntyi odotetun muotoiset dokumentit. Tätä ei ole vielä tehty —
+   vain yksittäiset Firestore-kutsut (salasanatarkistus) on varmennettu, ei koko
+   lomake+tallennus-polkua selaimessa asti.
 
 ## Seuraava askel
 
