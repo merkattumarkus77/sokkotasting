@@ -27,24 +27,24 @@ Päivitetty: 2026-08-20
     kannattaa käydä läpi selaimessa heti kun `.env.local` on täytetty ja `config/app` on olemassa.
 - Ylläpitoskripti `scripts/set-password.mjs` salasanan asettamiseen/vaihtoon Firestoreen
   (`npm run set-password <salasana>`), ks. skriptin alkukommentti käyttöohjeesta.
-- Git-repo alustettu paikallisesti (`git init`), useita commiteja tehty. **Ei vielä pushattu
-  GitHubiin** — remotea ei ole vielä lisätty.
 - Määrittely.md päivitetty versioon 2.2: lukittu yhden aktiivisen tastingin malli
   (ks. kohta 3.0) ja salasanan hallinta ylläpitoskriptillä (ks. kohta 2).
+- **Infra on nyt live**: Firebase-projekti `sokkotasting` luotu, Firestore käytössä,
+  `.env.local` täytetty oikeilla asetuksilla (ei committoitu, gitignoressa),
+  `serviceAccountKey.json` paikallaan projektin juuressa (gitignoressa). Yhteinen salasana
+  asetettu `config/app`-dokumenttiin skriptillä ja **varmennettu oikeaa Firestorea vasten**
+  samalla client-SDK-kutsulla jota sovellus itse käyttää — toimi. Koodi on pushattu GitHubiin:
+  `https://github.com/merkattumarkus77/sokkotasting.git` (branch `master`).
 
 ## Odottaa käyttäjää (ei voi tehdä puolestasi)
 
-1. **Firebase-projekti + Firestore**: luo projekti [Firebase-konsolissa](https://console.firebase.google.com),
-   lisää Web-sovellus, luo Firestore-tietokanta, täytä `.env.local` (pohja: `.env.local.example`).
-2. **Palvelutilin avain**: Project settings → Service accounts → Generate new private key,
-   tallenna `serviceAccountKey.json` projektin juureen (gitignoressa, ei committoida).
-   Aja tämän jälkeen `npm run set-password <salasana>` kerran, jotta config/app-dokumentti syntyy.
-3. **GitHub-repo**: luo tyhjä repo, anna osoite → lisätään remote ja pushataan.
-4. **Vercel**: yhdistä GitHub-repo, lisää samat Firebase-env-muuttujat Vercelin
-   Project Settings → Environment Variables -kohtaan.
-5. Kun yllä olevat on tehty: käy selaimessa läpi `/jarjesta`-lomake alusta loppuun (luo
+1. **Vercel**: tuo GitHub-repo `merkattumarkus77/sokkotasting` Verceliin (kesken käyttäjällä),
+   lisää samat 6 Firebase-env-muuttujaa kuin `.env.local`:ssa (annettu käyttäjälle chatissa),
+   ja paina Deploy.
+2. Kun sivusto on livenä: käy selaimessa läpi `/jarjesta`-lomake alusta loppuun (luo
    testitasting) ja tarkista Firebase-konsolista, että `events`- ja `participants`-kokoelmiin
-   syntyi odotetun muotoiset dokumentit.
+   syntyi odotetun muotoiset dokumentit. Tätä ei ole vielä tehty — vain yksittäiset Firestore-
+   kutsut (salasanatarkistus) on varmennettu, ei koko lomake+tallennus-polkua selaimessa asti.
 
 ## Seuraava askel
 
