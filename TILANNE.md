@@ -55,26 +55,56 @@ Päivitetty: 2026-08-20
   - Eslint-asetus vaihdettu Next 16:n flat configista (`eslint.config.mjs`) Next 15:n
     legacy-muotoon (`.eslintrc.json` + `next lint`), koska `eslint-config-next` ei 15.5:ssä
     julkaise flat-config-yhteensopivaa moduulia.
+- **Vaihe 3**: Osallistujan kirjautuminen ja "Odottaa maistiaisia" -tilanäkymä.
+  - `src/lib/participants.ts`: `findParticipantByName()` hakee osallistujan Firestore-kyselyllä
+    (`eventId` + `name`). `loginParticipant()` tarkistaa salasanan, hakee aktiivisen tapahtuman,
+    etsii osallistujan nimellä ja arpoo uuden `sessionToken`:in (`crypto.randomUUID()`), joka
+    kirjoitetaan `participants`-dokumenttiin — tämä mitätöi automaattisesti minkä tahansa
+    aiemman istunnon samalla nimellä. `subscribeToParticipant()` kuuntelee osallistujadokumenttia
+    reaaliajassa (`onSnapshot`).
+  - `src/lib/session.ts`: istunnon (`eventId`, `participantId`, `participantName`,
+    `sessionToken`) säilytys `localStorage`issa (`saveSession`/`loadSession`/`clearSession`).
+  - `src/components/ParticipantSession.tsx` (korvaa poistetun `PasswordCheck.tsx`:n
+    `/osallistu`-sivulla): tilakone `restoring → login → active`. Sivun avautuessa yrittää
+    palauttaa istunnon `localStorage`ista ja tarkistaa, että aktiivinen tapahtuma ja
+    sessiotoken täsmäävät; jos ei, näyttää kirjautumislomakkeen (nimi + yhteinen salasana).
+    Onnistuneen kirjautumisen jälkeen `onSnapshot`-kuuntelija päivittää näkymän reaaliajassa:
+    "Odottaa maistiaisia" (kierros ei vielä tarjoiltu), "Näytteet tarjoiltu" (tarjoiltu, odottaa
+    Vaihe 4:n arviointilomaketta), tai valmistumisilmoitus kun `currentRoundIndex` on ohittanut
+    viimeisen kierroksen. Jos toinen laite kirjautuu samalla nimellä, `sessionToken` vaihtuu
+    Firestoressa, kuuntelija havaitsee eron ja kirjaa tämän istunnon ulos automaattisesti
+    viestillä. "Kirjaudu ulos" -nappi tyhjentää istunnon manuaalisesti.
+  - **Varmennettu Playwrightilla kahdella selainkontekstilla** tuotanto-Firestorea vasten
+    (osallistujat Matti/Teppo, tasting "Testi"): (1) kirjautuminen näyttää oikean
+    "Odottaa maistiaisia" -tilan ja kierrosnumeron, (2) sivun uudelleenlataus palauttaa
+    istunnon suoraan tilanäkymään ilman kirjautumislomaketta, (3) toiselta "laitteelta"
+    (toinen selainkonteksti) samalla nimellä kirjautuminen kirjaa ensimmäisen istunnon
+    ulos automaattisesti reaaliajassa oikealla viestillä. Ei konsolivirheitä kummassakaan
+    kontekstissa. `npm run lint`, `tsc --noEmit` ja `npm run build` vihreitä.
 
 ## Seuraava askel
 
-**Vaihe 3**: Osallistujan kirjautuminen ja näkymä — nimi+salasana-kirjautumislomake,
-sessiotokenin luonti/tallennus (localStorage + Firestore `activeSessionId`, tuplakirjautumisen
-esto), sekä "Odottaa maistiaisia" -tilanäkymä joka kuuntelee reaaliajassa järjestäjän
-kuittausta. Ks. Määrittely.md kohdat 2 ja 3.4, sekä projektisuunnitelman "Vaihe 3". Osallistujan
-tulee löytää oma `participants`-dokumenttinsa nimen perusteella aktiivisesta tapahtumasta
-(`config.activeEventId`), ja resilienssivaatimuksen mukaan uudelleenkirjautuessa palata
-täsmälleen `currentRoundIndex`-kierrokseen.
+**Vaihe 4**: Arviointikierros (interaktioiden ydin) — järjestäjän dashboard "Kuittaa
+tarjoiltu" -napilla osallistujakohtaisesti (asettaa `round.served = true`, jonka Vaihe 3:n
+osallistujanäkymä jo osaa näyttää reaaliajassa "Näytteet tarjoiltu" -tilana), osallistujan
+arviointilomake (liukusäädin A/B-pisteille summalla 50, muistiinpanokenttä, arvausalasvedot
+laskureineen jos `guessingEnabled`), sekä "Hyväksy"-napin logiikka joka tallentaa `scores`-
+dokumentin, merkitsee kierroksen `completed: true` ja kasvattaa `currentRoundIndex`:iä. Ks.
+Määrittely.md kohdat 3.3–3.4 ja projektisuunnitelman "Vaihe 4".
 
 ## Muuta huomioitavaa jatkoa varten
 
 - App tukee vain yhtä aktiivista tastingia kerrallaan (`config.activeEventId`), ks. Määrittely.md 3.0.
 - A/B-järjestys parin sisällä arvotaan 50/50 (ks. Määrittely.md 3.2).
 - Ranking-% -kaava dokumentoitu Määrittely.md kohdassa 3.3.
-- `Participant.sessionToken` on toistaiseksi aina tyhjä merkkijono (`""`) — Vaihe 3 ottaa sen
-  käyttöön kirjautumisen yhteydessä.
+- Osallistujan istuntotoken tallennetaan `localStorage`issa avaimella `sokkotasting_session`
+  (ks. `src/lib/session.ts`) — sisältää `participantId`:n, jolla Vaihe 4:n arviointilomake voi
+  suoraan päivittää oikeaa `participants`-dokumenttia.
 - Firestore Security Rules (Määrittely.md kohta 4) ei ole vielä kirjoitettu — tehdään kun
-  osallistujan/järjestäjän kirjoitusoikeuksien tarkka rajaus on selvillä (viimeistään Vaihe 3–4).
+  osallistujan/järjestäjän kirjoitusoikeuksien tarkka rajaus on selvillä (viimeistään Vaihe 4).
+  Nyt jo kaksi kirjoituspolkua asiakkaalta ilman palvelinpuolen valvontaa: tapahtuman luonti
+  (Vaihe 2) ja `sessionToken`:in päivitys (Vaihe 3) — hyväksytty riski kevyen tietoturvamallin
+  mukaisesti, mutta syytä pitää mielessä sääntöjä kirjoitettaessa.
 - Tuotanto-Firestoressa on juuri nyt aktiivisena käyttäjän testitasting "Testi" (Claude vs
   ChatGPT, osallistujat Matti/Teppo). Kun oikea ensimmäinen tasting luodaan, `/jarjesta` näyttää
   siitä varoituksen (ks. Vaihe 2 -kuvaus yllä) — se on odotettu käytös, ei virhe. Testidatan voi
