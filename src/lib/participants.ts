@@ -76,3 +76,30 @@ export function subscribeToParticipant(
     onChange({ id: snapshot.id, ...snapshot.data() } as Participant);
   });
 }
+
+/** Kuuntelee reaaliajassa kaikkia tapahtuman osallistujia (järjestäjän dashboard). */
+export function subscribeToEventParticipants(
+  eventId: string,
+  onChange: (participants: Participant[]) => void
+): () => void {
+  const q = query(collection(db, "participants"), where("eventId", "==", eventId));
+  return onSnapshot(q, (snapshot) => {
+    const list = snapshot.docs.map(
+      (d) => ({ id: d.id, ...d.data() }) as Participant
+    );
+    list.sort((a, b) => a.name.localeCompare(b.name, "fi"));
+    onChange(list);
+  });
+}
+
+/**
+ * Kuittaa osallistujan nykyisen kierroksen tarjoilluksi. Lukee ja kirjoittaa koko
+ * rounds-taulukon, koska Firestore ei tue yksittäisen taulukkoalkion osittaista
+ * päivitystä kenttäpolulla.
+ */
+export async function markCurrentRoundServed(participant: Participant): Promise<void> {
+  const updatedRounds = participant.rounds.map((r, i) =>
+    i === participant.currentRoundIndex ? { ...r, served: true } : r
+  );
+  await updateDoc(doc(db, "participants", participant.id), { rounds: updatedRounds });
+}

@@ -9,6 +9,9 @@ export default function JarjestaPage() {
         <p className="text-muted">Aloita uusi tasting</p>
       </div>
       <OrganizerCreateEvent />
+      <Link href="/jarjesta/dashboard" className="text-sm text-muted underline underline-offset-4">
+        Siirry hallintapaneeliin (käynnissä oleva tasting)
+      </Link>
       <Link href="/" className="text-sm text-muted underline underline-offset-4">
         Takaisin etusivulle
       </Link>

@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import EvaluationForm from "@/components/EvaluationForm";
 import { getActiveEvent } from "@/lib/events";
 import { loginParticipant, subscribeToParticipant } from "@/lib/participants";
 import { clearSession, loadSession, saveSession, type StoredSession } from "@/lib/session";
-import type { Participant } from "@/lib/types";
+import type { Participant, TastingEvent } from "@/lib/types";
 
 type View = "restoring" | "login" | "active";
 
 export default function ParticipantSession() {
   const [view, setView] = useState<View>("restoring");
   const [participant, setParticipant] = useState<Participant | null>(null);
+  const [event, setEvent] = useState<TastingEvent | null>(null);
   const [info, setInfo] = useState("");
 
   const [name, setName] = useState("");
@@ -32,13 +34,14 @@ export default function ParticipantSession() {
         return;
       }
       try {
-        const event = await getActiveEvent();
-        if (!event || event.id !== stored.eventId) {
+        const activeEvent = await getActiveEvent();
+        if (!activeEvent || activeEvent.id !== stored.eventId) {
           clearSession();
           setInfo("Edellinen tasting on päättynyt tai vaihtunut. Kirjaudu uudelleen.");
           setView("login");
           return;
         }
+        setEvent(activeEvent);
         watchParticipant(stored);
       } catch {
         clearSession();
@@ -85,6 +88,7 @@ export default function ParticipantSession() {
       };
       saveSession(stored);
       setInfo("");
+      setEvent(result.event);
       watchParticipant(stored);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "Kirjautuminen epäonnistui.");
@@ -97,6 +101,7 @@ export default function ParticipantSession() {
     unsubscribeRef.current?.();
     clearSession();
     setParticipant(null);
+    setEvent(null);
     setInfo("");
     setName("");
     setPassword("");
@@ -143,13 +148,28 @@ export default function ParticipantSession() {
     );
   }
 
-  if (!participant) return null;
+  if (!participant || !event) return null;
 
   const totalRounds = participant.rounds.length;
   const currentRound =
     participant.currentRoundIndex < totalRounds
       ? participant.rounds[participant.currentRoundIndex]
       : null;
+
+  if (currentRound && currentRound.served && !currentRound.completed) {
+    return (
+      <div className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-surface p-6">
+        <EvaluationForm participant={participant} event={event} round={currentRound} />
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="self-center text-sm text-muted underline underline-offset-4"
+        >
+          Kirjaudu ulos
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-xl border border-border bg-surface p-6 text-center">
@@ -166,20 +186,12 @@ export default function ParticipantSession() {
 
       {currentRound && !currentRound.served && (
         <>
-          <p className="text-xl font-semibold">Odottaa maistiaisia</p>
+          <p className="text-xl font-semibold">
+            {participant.currentRoundIndex === 0 ? "Odottaa maistiaisia" : "Odottaa seuraavaa kierrosta"}
+          </p>
           <p className="text-sm text-muted">
             Kierros {currentRound.index + 1}/{totalRounds}. Odota, että järjestäjä tarjoilee
             seuraavat näytteet.
-          </p>
-        </>
-      )}
-
-      {currentRound && currentRound.served && !currentRound.completed && (
-        <>
-          <p className="text-xl font-semibold">Näytteet tarjoiltu</p>
-          <p className="text-sm text-muted">
-            Kierros {currentRound.index + 1}/{totalRounds}. Arviointilomake tulee seuraavassa
-            vaiheessa.
           </p>
         </>
       )}

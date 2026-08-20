@@ -81,31 +81,68 @@ Päivitetty: 2026-08-20
     (toinen selainkonteksti) samalla nimellä kirjautuminen kirjaa ensimmäisen istunnon
     ulos automaattisesti reaaliajassa oikealla viestillä. Ei konsolivirheitä kummassakaan
     kontekstissa. `npm run lint`, `tsc --noEmit` ja `npm run build` vihreitä.
+- **Vaihe 4**: Arviointikierros — järjestäjän tarjoilun kuittaus ja osallistujan arviointilomake.
+  - `src/lib/scores.ts`: `submitScore()` tallentaa `scores`-dokumentin ja merkitsee osallistujan
+    nykyisen kierroksen `completed: true` sekä kasvattaa `currentRoundIndex`:iä yhdellä
+    Firestore-batchilla. Arvauskentät (`guessAIndex`/`guessBIndex`) jätetään kokonaan pois
+    dokumentista kun arvaus ei ole päällä (Firestore hylkää `undefined`-arvot). `getGuessCounts()`
+    laskee osallistujan omasta `scores`-historiasta, kuinka monta kertaa kutakin tuotetta on jo
+    arvattu — näytetään pienellä luvulla arvausalasvedon vaihtoehdoissa.
+  - `src/lib/participants.ts` laajennettu: `subscribeToEventParticipants()` (kaikki tapahtuman
+    osallistujat reaaliajassa, järjestäjän dashboardia varten) ja `markCurrentRoundServed()`
+    (kuittaa nykyisen kierroksen tarjoilluksi — lukee/kirjoittaa koko `rounds`-taulukon, koska
+    Firestore ei tue yksittäisen taulukkoalkion osittaista päivitystä kenttäpolulla).
+  - `src/components/OrganizerDashboard.tsx` + `/jarjesta/dashboard`-sivu: salasana → reaaliaikainen
+    lista tapahtuman osallistujista tiloineen ("Odottaa maistiaisia" / "Maistamassa" / "Odottaa
+    seuraavaa kierrosta" / "Valmis"), kullekin näkyy seuraavan tarjoiltavan parin **oikeat**
+    tuotenimet ("Tarjoile A = X, B = Y") ja "Kuittaa tarjoiltu" -nappi kun kierrosta ei ole vielä
+    tarjoiltu. Linkitetty tapahtuman luonnin onnistumisnäkymästä ja `/jarjesta`-sivulta.
+  - `src/components/EvaluationForm.tsx`: renderöityy `ParticipantSession`in sisällä heti kun
+    nykyinen kierros on tarjoiltu muttei vielä valmis. Liukusäädin (0–50) tuotteen A pisteille,
+    B lasketaan automaattisesti (50 − A); muistiinpanokenttä; jos `guessingEnabled`, kaksi
+    alasvetovalikkoa **oikeilla** tuotenimillä (A- ja B-arvaus), estää saman tuotteen valinnan
+    molempiin. "Hyväksy" kutsuu `submitScore()`:ia, minkä jälkeen `ParticipantSession`in
+    reaaliaikainen kuuntelija vaihtaa näkymän automaattisesti takaisin odotustilaan tai
+    valmistumisilmoitukseen — ei erillistä uudelleenohjauslogiikkaa tarvita.
+  - **Varmennettu Playwrightilla** tuotanto-Firestorea vasten kahdella selainkontekstilla
+    (järjestäjän dashboard + osallistuja Matti, tasting "Testi"): koko sykli tarjoile → kuittaa →
+    osallistujan näkymä vaihtuu reaaliajassa arviointilomakkeeksi → liukusäädin, muistiinpanot ja
+    arvaukset täytetään → duplikaattiarvauksen validointi (sama tuote molempiin) torjuu
+    lähetyksen oikealla virheviestillä eikä kirjoita mitään Firestoreen → korjattu lähetys
+    tallentaa `scores`-dokumentin oikeilla arvoilla (pointsA=35, pointsB=15, summa 50, oikeat
+    `guessAIndex`/`guessBIndex`, muistiinpano) ja `participants`-dokumentti päivittyy
+    (`completed: true`, `currentRoundIndex` kasvaa) → sekä osallistujan että järjestäjän näkymä
+    näyttävät reaaliajassa "Valmis"/"Kaikki kierrokset suoritettu" ilman sivun päivitystä. Ei
+    konsolivirheitä. Testidata palautettu ajon jälkeen alkuperäiseen, koskemattomaan tilaan
+    (Matti: `served`/`completed` false, `currentRoundIndex` 0, tyhjä `sessionToken`, testi-`score`
+    poistettu) jotta käyttäjän oma käsin testaus alkaa puhtaalta pöydältä. `npm run lint`,
+    `tsc --noEmit` ja `npm run build` vihreitä.
 
 ## Seuraava askel
 
-**Vaihe 4**: Arviointikierros (interaktioiden ydin) — järjestäjän dashboard "Kuittaa
-tarjoiltu" -napilla osallistujakohtaisesti (asettaa `round.served = true`, jonka Vaihe 3:n
-osallistujanäkymä jo osaa näyttää reaaliajassa "Näytteet tarjoiltu" -tilana), osallistujan
-arviointilomake (liukusäädin A/B-pisteille summalla 50, muistiinpanokenttä, arvausalasvedot
-laskureineen jos `guessingEnabled`), sekä "Hyväksy"-napin logiikka joka tallentaa `scores`-
-dokumentin, merkitsee kierroksen `completed: true` ja kasvattaa `currentRoundIndex`:iä. Ks.
-Määrittely.md kohdat 3.3–3.4 ja projektisuunnitelman "Vaihe 4".
+**Käyttäjätestaus** (sovittu tehtäväksi ennen Vaihe 5:tä): käyttäjä testaa Vaihe 3–4:n koko
+polun itse livenä sokkotasting.vercel.app:ssa — kirjautuminen osallistujana, järjestäjän
+dashboard toiselta laitteelta/välilehdeltä, tarjoilun kuittaus, arviointilomakkeen täyttö
+liukusäätimellä ja arvauksilla, "Hyväksy". Testitasting "Testi" (Claude vs ChatGPT,
+osallistujat Matti/Teppo) on tuotannossa valmiina ja puhtaassa tilassa tätä varten.
+
+Sen jälkeen **Vaihe 5**: Tulokset, tilastot ja vienti — ranking-%-laskenta (Määrittely.md 3.3:n
+kaava), osallistujan ja järjestäjän tulosnäkymät oikeilla tuotenimillä, all-time-tilastot
+kategorian mukaan, Markdown/tekstivienti. Ks. projektisuunnitelman "Vaihe 5".
 
 ## Muuta huomioitavaa jatkoa varten
 
 - App tukee vain yhtä aktiivista tastingia kerrallaan (`config.activeEventId`), ks. Määrittely.md 3.0.
 - A/B-järjestys parin sisällä arvotaan 50/50 (ks. Määrittely.md 3.2).
-- Ranking-% -kaava dokumentoitu Määrittely.md kohdassa 3.3.
+- Ranking-% -kaava dokumentoitu Määrittely.md kohdassa 3.3 — ei vielä toteutettu, tulee Vaihe 5:ssä.
 - Osallistujan istuntotoken tallennetaan `localStorage`issa avaimella `sokkotasting_session`
-  (ks. `src/lib/session.ts`) — sisältää `participantId`:n, jolla Vaihe 4:n arviointilomake voi
-  suoraan päivittää oikeaa `participants`-dokumenttia.
-- Firestore Security Rules (Määrittely.md kohta 4) ei ole vielä kirjoitettu — tehdään kun
-  osallistujan/järjestäjän kirjoitusoikeuksien tarkka rajaus on selvillä (viimeistään Vaihe 4).
-  Nyt jo kaksi kirjoituspolkua asiakkaalta ilman palvelinpuolen valvontaa: tapahtuman luonti
-  (Vaihe 2) ja `sessionToken`:in päivitys (Vaihe 3) — hyväksytty riski kevyen tietoturvamallin
-  mukaisesti, mutta syytä pitää mielessä sääntöjä kirjoitettaessa.
+  (ks. `src/lib/session.ts`).
+- Firestore Security Rules (Määrittely.md kohta 4) ei ole vielä kirjoitettu. Kirjoituspolkuja
+  asiakkaalta ilman palvelinpuolen valvontaa on nyt neljä: tapahtuman luonti (Vaihe 2),
+  `sessionToken`:in päivitys (Vaihe 3), sekä tarjoilun kuittaus ja pisteiden tallennus
+  (Vaihe 4) — hyväksytty riski kevyen tietoturvamallin mukaisesti, mutta säännöt kannattaa
+  kirjoittaa viimeistään ennen Vaihe 5:n julkista tulosnäkymää.
 - Tuotanto-Firestoressa on juuri nyt aktiivisena käyttäjän testitasting "Testi" (Claude vs
-  ChatGPT, osallistujat Matti/Teppo). Kun oikea ensimmäinen tasting luodaan, `/jarjesta` näyttää
-  siitä varoituksen (ks. Vaihe 2 -kuvaus yllä) — se on odotettu käytös, ei virhe. Testidatan voi
-  jättää roikkumaan tai poistaa Firebase-konsolista, ei kiirettä.
+  ChatGPT, osallistujat Matti/Teppo), tila puhdas (ei tarjoiltu, ei pisteitä) käyttäjätestausta
+  varten. Kun oikea ensimmäinen tasting luodaan, `/jarjesta` näyttää siitä varoituksen (ks.
+  Vaihe 2 -kuvaus yllä) — se on odotettu käytös, ei virhe.

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { checkPassword } from "@/lib/config";
 import { createEvent, getActiveEvent } from "@/lib/events";
@@ -144,9 +145,12 @@ export default function OrganizerCreateEvent() {
             teoreettinen pari löytyy tarkalleen kerran.
           </li>
         </ul>
-        <p className="text-sm text-muted">
-          Järjestäjän dashboard (tarjoilulista, kuittaukset) rakennetaan seuraavassa vaiheessa.
-        </p>
+        <Link
+          href="/jarjesta/dashboard"
+          className="mt-1 self-start rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground"
+        >
+          Siirry hallintapaneeliin
+        </Link>
       </div>
     );
   }
