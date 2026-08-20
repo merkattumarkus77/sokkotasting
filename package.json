@@ -6,12 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "next lint",
     "set-password": "node scripts/set-password.mjs"
   },
   "dependencies": {
     "firebase": "^12.18.0",
-    "next": "16.3.1",
+    "next": "^15.5.23",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -21,7 +21,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.1",
+    "eslint-config-next": "^15.5.23",
     "firebase-admin": "^14.3.0",
     "tailwindcss": "^4",
     "typescript": "^5"
