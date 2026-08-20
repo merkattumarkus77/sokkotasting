@@ -22,9 +22,11 @@ Päivitetty: 2026-08-20
     tasting on yhä aktiivinen (ei pakota jatkamaan, vaatii vahvistuksen) → lomake (nimi,
     kategoria, osallistujat/tuotteet dynaamisina listoina, annoskoko+yksikkö, arvausoptio) →
     live "Suunnittelutyökalu" (paria/osallistuja, tuotetarve) → tallennus → yhteenveto.
-  - **Ei vielä testattu oikeaa Firestorea vasten** (ei ole vielä käyttäjän Firebase-projektia).
-    Build/typecheck/lint vihreitä ja sivu renderöityy oikein, mutta koko lomake+tallennus-polku
-    kannattaa käydä läpi selaimessa heti kun `.env.local` on täytetty ja `config/app` on olemassa.
+  - **Varmennettu livenä käyttäjän toimesta** (2026-08-20): käyttäjä loi oikean testitastingin
+    sokkotasting.vercel.app:ssa, ja tarkistin Firestoresta admin-skriptillä että `events`- ja
+    `participants`-dokumentit syntyivät odotetusti (event: 2 tuotetta, 2 osallistujaa,
+    pairsPerParticipant=1; molemmilla osallistujilla 1 validi uniikki kierros, `status: active`,
+    `sessionToken` tyhjä). Koko Vaihe 2 -polku toimii siis päästä päähän tuotannossa.
 - Ylläpitoskripti `scripts/set-password.mjs` salasanan asettamiseen/vaihtoon Firestoreen
   (`npm run set-password <salasana>`), ks. skriptin alkukommentti käyttöohjeesta.
 - Määrittely.md päivitetty versioon 2.2: lukittu yhden aktiivisen tastingin malli
@@ -54,14 +56,6 @@ Päivitetty: 2026-08-20
     legacy-muotoon (`.eslintrc.json` + `next lint`), koska `eslint-config-next` ei 15.5:ssä
     julkaise flat-config-yhteensopivaa moduulia.
 
-## Odottaa käyttäjää / seuraava tarkistus
-
-1. Käy selaimessa läpi `/jarjesta`-lomake alusta loppuun livenä osoitteessa
-   sokkotasting.vercel.app (luo testitasting) ja tarkista Firebase-konsolista, että `events`- ja
-   `participants`-kokoelmiin syntyi odotetun muotoiset dokumentit. Tätä ei ole vielä tehty —
-   vain yksittäiset Firestore-kutsut (salasanatarkistus) on varmennettu, ei koko
-   lomake+tallennus-polkua selaimessa asti.
-
 ## Seuraava askel
 
 **Vaihe 3**: Osallistujan kirjautuminen ja näkymä — nimi+salasana-kirjautumislomake,
@@ -81,3 +75,7 @@ täsmälleen `currentRoundIndex`-kierrokseen.
   käyttöön kirjautumisen yhteydessä.
 - Firestore Security Rules (Määrittely.md kohta 4) ei ole vielä kirjoitettu — tehdään kun
   osallistujan/järjestäjän kirjoitusoikeuksien tarkka rajaus on selvillä (viimeistään Vaihe 3–4).
+- Tuotanto-Firestoressa on juuri nyt aktiivisena käyttäjän testitasting "Testi" (Claude vs
+  ChatGPT, osallistujat Matti/Teppo). Kun oikea ensimmäinen tasting luodaan, `/jarjesta` näyttää
+  siitä varoituksen (ks. Vaihe 2 -kuvaus yllä) — se on odotettu käytös, ei virhe. Testidatan voi
+  jättää roikkumaan tai poistaa Firebase-konsolista, ei kiirettä.
