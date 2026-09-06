@@ -7,7 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "set-password": "node scripts/set-password.mjs"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:emulator": "echo \"TODO (Vaihe C): integraatiotestit Firestore-emulaattoria vastaan\" && exit 1",
+    "simulate": "echo \"TODO (Vaihe E): tasting-simulaatio ilman UI:ta\" && exit 1",
+    "seed:config": "node scripts/set-password.mjs",
+    "set-password": "node scripts/set-password.mjs",
+    "seed:demo": "echo \"TODO (Vaihe D): demodata emulaattoriin\" && exit 1",
+    "e2e": "echo \"TODO (Vaihe H): Playwright emulaattoria vastaan\" && exit 1"
   },
   "dependencies": {
     "firebase": "^12.18.0",
@@ -17,13 +24,15 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "^15.5.23",
     "firebase-admin": "^14.3.0",
+    "firebase-tools": "^15.29.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.0.0"
   }
 }

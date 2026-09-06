@@ -1,3 +1,4 @@
+import { createRng } from "@/lib/prng";
 import type { Round } from "@/lib/types";
 
 const MAX_GENERATION_ATTEMPTS = 50;
@@ -17,10 +18,10 @@ function allTheoreticalPairs(productCount: number): [number, number][] {
   return pairs;
 }
 
-function shuffle<T>(items: T[]): T[] {
+function shuffle<T>(items: T[], random: () => number): T[] {
   const result = [...items];
   for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [result[i], result[j]] = [result[j], result[i]];
   }
   return result;
@@ -49,16 +50,21 @@ export function validateRounds(rounds: Round[], productCount: number): boolean {
  * Arpoo yhdelle osallistujalle kaikki mahdolliset tuoteparit satunnaisessa
  * järjestyksessä, satunnaisella A/B-jaolla parin sisällä. Tarkistaa tuloksen
  * ja arpoo uudelleen, jos jokin pari puuttuisi tai toistuisi.
+ *
+ * `seed` tekee arvonnasta deterministisen (SPEC 6.1: sama siemen -> sama
+ * järjestys), mikä on ainoa tapa testata arvontaa luotettavasti ja ainoa tapa
+ * toistaa se myöhemmin tallennetusta rngSeed-arvosta.
  */
-export function generateParticipantRounds(productCount: number): Round[] {
+export function generateParticipantRounds(productCount: number, seed: string): Round[] {
   if (productCount < 2) {
     throw new Error("Tuotteita on oltava vähintään kaksi Round Robin -parsintaa varten.");
   }
 
   for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
-    const orderedPairs = shuffle(allTheoreticalPairs(productCount));
+    const random = createRng(`${seed}:${attempt}`);
+    const orderedPairs = shuffle(allTheoreticalPairs(productCount), random);
     const rounds: Round[] = orderedPairs.map(([i, j], index) => {
-      const swap = Math.random() < 0.5;
+      const swap = random() < 0.5;
       return {
         index,
         productAIndex: swap ? j : i,
@@ -81,11 +87,12 @@ export function generateParticipantRounds(productCount: number): Round[] {
 /** Arpoo kierrokset erikseen jokaiselle osallistujalle (estää vertaispaineen). */
 export function generateRoundsForParticipants(
   participantNames: string[],
-  productCount: number
+  productCount: number,
+  seedFor: (name: string) => string
 ): Map<string, Round[]> {
   const result = new Map<string, Round[]>();
   for (const name of participantNames) {
-    result.set(name, generateParticipantRounds(productCount));
+    result.set(name, generateParticipantRounds(productCount, seedFor(name)));
   }
   return result;
 }

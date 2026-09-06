@@ -32,7 +32,8 @@ export async function createEvent(input: CreateEventInput): Promise<string> {
   const pairsPerParticipant = pairsPerParticipantCount(input.productNames.length);
   const roundsByParticipant = generateRoundsForParticipants(
     input.participantNames,
-    input.productNames.length
+    input.productNames.length,
+    () => crypto.randomUUID()
   );
 
   const eventRef = doc(collection(db, "events"));

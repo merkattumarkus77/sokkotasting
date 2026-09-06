@@ -1,0 +1,30 @@
+rules_version = '2';
+
+// SPEC 2.2: kaikki kirjoitukset kulkevat Route Handlerin + firebase-adminin
+// kautta (Admin SDK ohittaa nämä säännöt). Selain saa vain lukea /events ja
+// /categories -polkuja; /config ei koskaan, ei luku eikä kirjoitus.
+//
+// Tätä tiedostoa EI oteta käyttöön tuotanto-Firestoressa tässä vaiheessa
+// (Vaihe A) — se on olemassa vain paikallista emulaattoria varten, kunnes
+// Vaihe C:n Route Handlerit korvaavat kaiken selaimesta tulevan kirjoituksen.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /config/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /events/{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /categories/{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
