@@ -1,72 +1,75 @@
-import { collection, doc, getDoc, writeBatch } from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { generateRoundsForParticipants, pairsPerParticipantCount } from "@/lib/roundRobin";
-import type { Participant, TastingEvent } from "@/lib/types";
+import "server-only";
+import { adminDb } from "@/lib/firebaseAdmin";
+import { slugify } from "@/lib/normalize";
+import type { EventDoc } from "@/lib/types";
+
+const EVENTS = "events";
+
+export class ActiveEventExistsError extends Error {
+  constructor(public readonly activeEvent: EventDoc) {
+    super("ACTIVE_EVENT_EXISTS");
+  }
+}
+
+export async function getActiveEvent(): Promise<EventDoc | null> {
+  const snapshot = await adminDb.collection(EVENTS).where("status", "==", "active").limit(1).get();
+  if (snapshot.empty) return null;
+  const doc = snapshot.docs[0]!;
+  return { id: doc.id, ...doc.data() } as EventDoc;
+}
+
+export async function getEvent(eventId: string): Promise<EventDoc | null> {
+  const doc = await adminDb.collection(EVENTS).doc(eventId).get();
+  if (!doc.exists) return null;
+  return { id: doc.id, ...doc.data() } as EventDoc;
+}
 
 export interface CreateEventInput {
   name: string;
   category: string;
-  participantNames: string[];
-  productNames: string[];
-  portionSizeValue: number;
-  portionSizeUnit: string;
-  guessingEnabled: boolean;
-}
-
-export async function getActiveEvent(): Promise<TastingEvent | null> {
-  const configSnapshot = await getDoc(doc(db, "config", "app"));
-  const activeEventId = configSnapshot.exists() ? configSnapshot.data().activeEventId : undefined;
-  if (!activeEventId) return null;
-
-  const eventSnapshot = await getDoc(doc(db, "events", activeEventId));
-  if (!eventSnapshot.exists()) return null;
-  return { id: eventSnapshot.id, ...eventSnapshot.data() } as TastingEvent;
+  /** Set when the organizer confirmed replacing the currently active event. */
+  archivePreviousEventId?: string;
 }
 
 /**
- * Luo uuden tastingin: arpoo ja tarkistaa jokaisen osallistujan kierrokset,
- * tallentaa event- ja participant-dokumentit yhdellä batchilla, ja päivittää
- * config.activeEventId osoittamaan uuteen tapahtumaan.
+ * Creates a new event. SPEC 4.2: only one active event at a time. Fails with
+ * ActiveEventExistsError if another event is already active, unless
+ * archivePreviousEventId names that exact event — then it is archived in the
+ * same transaction as the new one is created.
  */
 export async function createEvent(input: CreateEventInput): Promise<string> {
-  const pairsPerParticipant = pairsPerParticipantCount(input.productNames.length);
-  const roundsByParticipant = generateRoundsForParticipants(
-    input.participantNames,
-    input.productNames.length,
-    () => crypto.randomUUID()
-  );
+  const eventRef = adminDb.collection(EVENTS).doc();
 
-  const eventRef = doc(collection(db, "events"));
-  const event: Omit<TastingEvent, "id"> = {
-    name: input.name,
-    category: input.category,
-    productNames: input.productNames,
-    participantNames: input.participantNames,
-    portionSizeValue: input.portionSizeValue,
-    portionSizeUnit: input.portionSizeUnit,
-    guessingEnabled: input.guessingEnabled,
-    pairsPerParticipant,
-    status: "active",
-    createdAt: Date.now(),
-  };
+  await adminDb.runTransaction(async (tx) => {
+    const activeSnapshot = await tx.get(
+      adminDb.collection(EVENTS).where("status", "==", "active").limit(1)
+    );
 
-  const batch = writeBatch(db);
-  batch.set(eventRef, event);
+    if (!activeSnapshot.empty) {
+      const activeDoc = activeSnapshot.docs[0]!;
+      const activeEvent = { id: activeDoc.id, ...activeDoc.data() } as EventDoc;
+      if (activeDoc.id !== input.archivePreviousEventId) {
+        throw new ActiveEventExistsError(activeEvent);
+      }
+      tx.update(activeDoc.ref, { status: "archived", closedAt: Date.now() });
+    }
 
-  for (const name of input.participantNames) {
-    const participantRef = doc(collection(db, "participants"));
-    const participant: Omit<Participant, "id"> = {
-      eventId: eventRef.id,
-      name,
-      sessionToken: "",
-      rounds: roundsByParticipant.get(name)!,
-      currentRoundIndex: 0,
+    const event: Omit<EventDoc, "id"> = {
+      name: input.name,
+      category: input.category,
+      categoryId: slugify(input.category),
+      status: "active",
+      createdAt: Date.now(),
     };
-    batch.set(participantRef, participant);
-  }
+    tx.set(eventRef, event);
+  });
 
-  batch.set(doc(db, "config", "app"), { activeEventId: eventRef.id }, { merge: true });
-
-  await batch.commit();
   return eventRef.id;
+}
+
+export async function archiveEvent(eventId: string): Promise<void> {
+  await adminDb.collection(EVENTS).doc(eventId).update({
+    status: "archived",
+    closedAt: Date.now(),
+  });
 }

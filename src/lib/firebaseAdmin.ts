@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { EMULATOR_PROJECT_ID } from "@/lib/limits";
 
 // Palvelinpuolen (Route Handler, skripti) Firestore-yhteys. Kun
 // FIRESTORE_EMULATOR_HOST on asetettu, admin-SDK ohjautuu automaattisesti
@@ -13,9 +14,7 @@ function loadAdminApp(): App {
   if (getApps().length) return getApps()[0]!;
 
   if (process.env.FIRESTORE_EMULATOR_HOST) {
-    return initializeApp({
-      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "sokkotasting-emulator",
-    });
+    return initializeApp({ projectId: EMULATOR_PROJECT_ID });
   }
 
   const serviceAccountPath = resolve(

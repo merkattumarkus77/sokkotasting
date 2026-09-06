@@ -1,105 +1,91 @@
-import {
-  collection,
-  doc,
-  getDocs,
-  onSnapshot,
-  query,
-  updateDoc,
-  where,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { checkPassword } from "@/lib/config";
-import { getActiveEvent } from "@/lib/events";
-import type { Participant, TastingEvent } from "@/lib/types";
+import "server-only";
+import { adminDb } from "@/lib/firebaseAdmin";
+import { normalizeName } from "@/lib/normalize";
+import type { ParticipantDoc } from "@/lib/types";
 
-export async function findParticipantByName(
-  eventId: string,
-  name: string
-): Promise<Participant | null> {
-  const q = query(
-    collection(db, "participants"),
-    where("eventId", "==", eventId),
-    where("name", "==", name)
-  );
-  const snapshot = await getDocs(q);
-  if (snapshot.empty) return null;
-  const found = snapshot.docs[0]!;
-  return { id: found.id, ...found.data() } as Participant;
+function participantsRef(eventId: string) {
+  return adminDb.collection("events").doc(eventId).collection("participants");
 }
 
 export interface LoginResult {
-  event: TastingEvent;
-  participant: Participant;
-  sessionToken: string;
+  participant: ParticipantDoc;
+  sessionId: string;
 }
 
 /**
- * Kirjaa osallistujan sisään: tarkistaa yhteisen salasanan, etsii osallistujan
- * nimellä aktiivisesta tapahtumasta, ja arpoo uuden sessiotokenin — tämä
- * mitätöi automaattisesti minkä tahansa aiemman istunnon samalla nimellä,
- * koska muut laitteet vertaavat tallennettua tokeniaan tähän dokumenttiin.
+ * SPEC 4.2 login: find by nameKey, create if missing, always issue a fresh
+ * activeSessionId. This invalidates any other device already logged in
+ * under the same nickname, since their onSnapshot listener will see the
+ * mismatch and log out.
  */
-export async function loginParticipant(
-  name: string,
-  password: string
-): Promise<LoginResult> {
-  const trimmedName = name.trim();
-  if (!trimmedName) throw new Error("Anna nimi.");
+export async function loginParticipant(eventId: string, nickname: string): Promise<LoginResult> {
+  const trimmedName = nickname.trim();
+  const nameKey = normalizeName(trimmedName);
+  if (!nameKey) throw new Error("EMPTY_NAME");
 
-  const valid = await checkPassword(password);
-  if (!valid) throw new Error("Väärä salasana.");
+  const ref = participantsRef(eventId);
+  const sessionId = crypto.randomUUID();
 
-  const event = await getActiveEvent();
-  if (!event) throw new Error("Aktiivista tastingia ei ole käynnissä juuri nyt.");
+  const participant = await adminDb.runTransaction<ParticipantDoc>(async (tx) => {
+    const existing = await tx.get(ref.where("nameKey", "==", nameKey).limit(1));
+    const now = Date.now();
 
-  const participant = await findParticipantByName(event.id, trimmedName);
-  if (!participant) {
-    throw new Error(`Nimeä "${trimmedName}" ei löytynyt tästä tastingista.`);
-  }
-
-  const sessionToken = crypto.randomUUID();
-  await updateDoc(doc(db, "participants", participant.id), { sessionToken });
-
-  return { event, participant: { ...participant, sessionToken }, sessionToken };
-}
-
-/** Kuuntelee osallistujadokumenttia reaaliajassa (tarjoilun kuittaus, sessiotokenin vaihtuminen). */
-export function subscribeToParticipant(
-  participantId: string,
-  onChange: (participant: Participant | null) => void
-): () => void {
-  return onSnapshot(doc(db, "participants", participantId), (snapshot) => {
-    if (!snapshot.exists()) {
-      onChange(null);
-      return;
+    if (!existing.empty) {
+      const doc = existing.docs[0]!;
+      tx.update(doc.ref, { activeSessionId: sessionId, lastActiveAt: now });
+      return {
+        ...(doc.data() as Omit<ParticipantDoc, "id">),
+        id: doc.id,
+        activeSessionId: sessionId,
+        lastActiveAt: now,
+      };
     }
-    onChange({ id: snapshot.id, ...snapshot.data() } as Participant);
+
+    const newRef = ref.doc();
+    const data: Omit<ParticipantDoc, "id"> = {
+      name: trimmedName,
+      nameKey,
+      activeSessionId: sessionId,
+      excludedTastingIds: [],
+      createdAt: now,
+      lastActiveAt: now,
+    };
+    tx.set(newRef, data);
+    return { id: newRef.id, ...data };
   });
+
+  return { participant, sessionId };
 }
 
-/** Kuuntelee reaaliajassa kaikkia tapahtuman osallistujia (järjestäjän dashboard). */
-export function subscribeToEventParticipants(
+export async function getParticipant(
   eventId: string,
-  onChange: (participants: Participant[]) => void
-): () => void {
-  const q = query(collection(db, "participants"), where("eventId", "==", eventId));
-  return onSnapshot(q, (snapshot) => {
-    const list = snapshot.docs.map(
-      (d) => ({ id: d.id, ...d.data() }) as Participant
-    );
-    list.sort((a, b) => a.name.localeCompare(b.name, "fi"));
-    onChange(list);
-  });
+  participantId: string
+): Promise<ParticipantDoc | null> {
+  const doc = await participantsRef(eventId).doc(participantId).get();
+  if (!doc.exists) return null;
+  return { id: doc.id, ...doc.data() } as ParticipantDoc;
 }
 
-/**
- * Kuittaa osallistujan nykyisen kierroksen tarjoilluksi. Lukee ja kirjoittaa koko
- * rounds-taulukon, koska Firestore ei tue yksittäisen taulukkoalkion osittaista
- * päivitystä kenttäpolulla.
- */
-export async function markCurrentRoundServed(participant: Participant): Promise<void> {
-  const updatedRounds = participant.rounds.map((r, i) =>
-    i === participant.currentRoundIndex ? { ...r, served: true } : r
-  );
-  await updateDoc(doc(db, "participants", participant.id), { rounds: updatedRounds });
+export async function listParticipants(eventId: string): Promise<ParticipantDoc[]> {
+  const snapshot = await participantsRef(eventId).orderBy("name").get();
+  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as ParticipantDoc);
+}
+
+/** Organizer-controlled opt-out per tasting (SPEC 3: excludedTastingIds). */
+export async function setParticipantExclusion(
+  eventId: string,
+  participantId: string,
+  tastingId: string,
+  excluded: boolean
+): Promise<void> {
+  const ref = participantsRef(eventId).doc(participantId);
+  await adminDb.runTransaction(async (tx) => {
+    const doc = await tx.get(ref);
+    if (!doc.exists) throw new Error("PARTICIPANT_NOT_FOUND");
+    const data = doc.data() as ParticipantDoc;
+    const excludedSet = new Set(data.excludedTastingIds);
+    if (excluded) excludedSet.add(tastingId);
+    else excludedSet.delete(tastingId);
+    tx.update(ref, { excludedTastingIds: [...excludedSet] });
+  });
 }

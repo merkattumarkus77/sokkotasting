@@ -1,161 +1,226 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { checkPassword } from "@/lib/config";
-import { getActiveEvent } from "@/lib/events";
-import { markCurrentRoundServed, subscribeToEventParticipants } from "@/lib/participants";
-import type { Participant, TastingEvent } from "@/lib/types";
+import { useEffect, useState } from "react";
+import AdminLoginGate from "@/components/AdminLoginGate";
+import { subscribeToActiveEvent, subscribeToEventParticipants } from "@/lib/clientRealtime";
+import type { EventDoc, ParticipantDoc, TastingDoc } from "@/lib/types";
 
-type View = "password" | "loading" | "empty" | "dashboard";
+type EntryStatus = "not_started" | "waiting_service" | "tasting" | "done";
 
-function statusFor(participant: Participant): string {
-  const total = participant.rounds.length;
-  if (participant.currentRoundIndex >= total) return "Valmis";
-  const round = participant.rounds[participant.currentRoundIndex]!;
-  if (!round.served) {
-    return participant.currentRoundIndex === 0 ? "Odottaa maistiaisia" : "Odottaa seuraavaa kierrosta";
-  }
-  return round.completed ? "Odottaa seuraavaa kierrosta" : "Maistamassa";
+interface DashboardEntry {
+  participantId: string;
+  name: string;
+  status: EntryStatus;
+  completedRounds: number;
+  totalRounds: number;
+  nextRound?: { roundId: string; itemAName: string; itemBName: string };
 }
 
-export default function OrganizerDashboard() {
-  const [view, setView] = useState<View>("password");
+const STATUS_LABELS: Record<EntryStatus, string> = {
+  not_started: "Odottaa maistiaisia",
+  waiting_service: "Odottaa tarjoilua",
+  tasting: "Maistamassa",
+  done: "Valmis",
+};
 
-  const [password, setPassword] = useState("");
-  const [passwordChecking, setPasswordChecking] = useState(false);
-  const [passwordError, setPasswordError] = useState("");
-
-  const [event, setEvent] = useState<TastingEvent | null>(null);
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [servingId, setServingId] = useState<string | null>(null);
+function OrganizerDashboardInner() {
+  const [activeEvent, setActiveEvent] = useState<EventDoc | null>(null);
+  const [participants, setParticipants] = useState<ParticipantDoc[]>([]);
+  const [tastings, setTastings] = useState<TastingDoc[]>([]);
+  const [selectedTastingId, setSelectedTastingId] = useState<string | null>(null);
+  const [entries, setEntries] = useState<DashboardEntry[]>([]);
   const [actionError, setActionError] = useState("");
+  const [busyParticipantId, setBusyParticipantId] = useState<string | null>(null);
 
-  const unsubscribeRef = useRef<(() => void) | null>(null);
+  useEffect(() => subscribeToActiveEvent(setActiveEvent), []);
 
   useEffect(() => {
-    return () => unsubscribeRef.current?.();
-  }, []);
-
-  async function handlePasswordSubmit(e: FormEvent) {
-    e.preventDefault();
-    setPasswordChecking(true);
-    setPasswordError("");
-    try {
-      const valid = await checkPassword(password);
-      if (!valid) {
-        setPasswordError("Väärä salasana.");
-        return;
-      }
-      setView("loading");
-      const activeEvent = await getActiveEvent();
-      if (!activeEvent) {
-        setView("empty");
-        return;
-      }
-      setEvent(activeEvent);
-      unsubscribeRef.current = subscribeToEventParticipants(activeEvent.id, setParticipants);
-      setView("dashboard");
-    } catch {
-      setPasswordError("Yhteys tietokantaan epäonnistui.");
-      setView("password");
-    } finally {
-      setPasswordChecking(false);
+    if (!activeEvent) {
+      setParticipants([]);
+      return;
     }
-  }
+    return subscribeToEventParticipants(activeEvent.id, setParticipants);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeEvent?.id]);
 
-  async function handleServe(participant: Participant) {
-    setServingId(participant.id);
+  useEffect(() => {
+    if (!activeEvent) {
+      setTastings([]);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/tastings")
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        setTastings(data.tastings);
+        setSelectedTastingId((current) => current ?? data.tastings[0]?.id ?? null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeEvent?.id]);
+
+  useEffect(() => {
+    if (!selectedTastingId) return;
+    let cancelled = false;
+
+    async function poll() {
+      const res = await fetch(`/api/tastings/${selectedTastingId}/dashboard`);
+      if (!res.ok || cancelled) return;
+      const data = await res.json();
+      setEntries(data.entries);
+    }
+
+    poll();
+    const id = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [selectedTastingId]);
+
+  async function handleServe(participantId: string, roundId: string) {
+    if (!selectedTastingId) return;
+    setBusyParticipantId(participantId);
     setActionError("");
     try {
-      await markCurrentRoundServed(participant);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Kuittaus epäonnistui.");
+      const res = await fetch(`/api/tastings/${selectedTastingId}/serve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ participantId, roundId }),
+      });
+      const data = await res.json();
+      if (!res.ok) setActionError(data.error ?? "Kuittaus epäonnistui.");
+    } catch {
+      setActionError("Yhteys palvelimeen epäonnistui.");
     } finally {
-      setServingId(null);
+      setBusyParticipantId(null);
     }
   }
 
-  if (view === "password") {
-    return (
-      <form onSubmit={handlePasswordSubmit} className="flex w-full max-w-sm flex-col gap-3">
-        <label className="flex flex-col gap-1 text-left text-sm">
-          Yhteinen salasana
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="rounded-lg border border-border bg-surface px-3 py-2 text-foreground outline-none focus:border-accent"
-            autoComplete="current-password"
-          />
-        </label>
-        <button
-          type="submit"
-          disabled={passwordChecking || password.length === 0}
-          className="rounded-lg bg-accent px-4 py-2 font-medium text-accent-foreground disabled:opacity-50"
-        >
-          {passwordChecking ? "Tarkistetaan..." : "Jatka"}
-        </button>
-        {passwordError && <p className="text-sm text-danger">{passwordError}</p>}
-      </form>
-    );
+  async function handleServeAll() {
+    if (!selectedTastingId) return;
+    setActionError("");
+    try {
+      const res = await fetch(`/api/tastings/${selectedTastingId}/serve-all`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) setActionError(data.error ?? "Kuittaus epäonnistui.");
+    } catch {
+      setActionError("Yhteys palvelimeen epäonnistui.");
+    }
   }
 
-  if (view === "loading") {
-    return <p className="text-sm text-muted">Ladataan...</p>;
+  async function handleExclusionToggle(participantId: string, excluded: boolean) {
+    if (!activeEvent || !selectedTastingId) return;
+    await fetch(`/api/events/${activeEvent.id}/participants/${participantId}/tastings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tastingId: selectedTastingId, excluded }),
+    });
   }
 
-  if (view === "empty" || !event) {
-    return <p className="text-sm text-muted">Aktiivista tastingia ei löytynyt.</p>;
+  if (!activeEvent) {
+    return <p className="text-sm text-muted">Aktiivista tapahtumaa ei löytynyt.</p>;
   }
 
   return (
     <div className="flex w-full max-w-2xl flex-col gap-4 text-left">
       <div className="rounded-lg border border-border bg-surface p-4">
-        <p className="font-medium">{event.name}</p>
+        <p className="font-medium">{activeEvent.name}</p>
         <p className="text-sm text-muted">
-          {event.category} · {participants.length} osallistujaa
+          {activeEvent.category} · {participants.length} osallistujaa
         </p>
       </div>
 
+      {tastings.length === 0 && (
+        <p className="text-sm text-muted">Ei vielä tastingeja tässä tapahtumassa.</p>
+      )}
+
+      {tastings.length > 1 && (
+        <select
+          value={selectedTastingId ?? ""}
+          onChange={(e) => setSelectedTastingId(e.target.value)}
+          className="rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+        >
+          {tastings.map((tasting) => (
+            <option key={tasting.id} value={tasting.id}>
+              {tasting.name}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {selectedTastingId && entries.some((e) => e.status === "waiting_service") && (
+        <button
+          type="button"
+          onClick={handleServeAll}
+          className="self-start rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-surface-raised"
+        >
+          Kuittaa kaikki odottavat
+        </button>
+      )}
+
       <div className="flex flex-col gap-3">
-        {participants.map((participant) => {
-          const total = participant.rounds.length;
-          const status = statusFor(participant);
-          const round =
-            participant.currentRoundIndex < total
-              ? participant.rounds[participant.currentRoundIndex]
-              : null;
+        {entries.map((entry) => {
+          const participant = participants.find((p) => p.id === entry.participantId);
+          const excluded =
+            participant?.excludedTastingIds.includes(selectedTastingId ?? "") ?? false;
 
           return (
-            <div key={participant.id} className="rounded-lg border border-border bg-surface p-4">
+            <div key={entry.participantId} className="rounded-lg border border-border bg-surface p-4">
               <div className="flex items-center justify-between">
-                <p className="font-medium">{participant.name}</p>
-                <span className="text-sm text-muted">{status}</span>
+                <p className="font-medium">{entry.name}</p>
+                <span className="text-sm text-muted">{STATUS_LABELS[entry.status]}</span>
               </div>
-              {round ? (
+
+              {entry.nextRound ? (
                 <p className="mt-1 text-sm text-muted">
-                  Kierros {round.index + 1}/{total} — Tarjoile A ={" "}
-                  {event.productNames[round.productAIndex]}, B ={" "}
-                  {event.productNames[round.productBIndex]}
+                  Kierros {entry.completedRounds + 1}/{entry.totalRounds} — Tarjoile A ={" "}
+                  {entry.nextRound.itemAName}, B = {entry.nextRound.itemBName}
                 </p>
               ) : (
-                <p className="mt-1 text-sm text-success">Kaikki {total} kierrosta suoritettu.</p>
+                <p className="mt-1 text-sm text-muted">
+                  {entry.completedRounds}/{entry.totalRounds} kierrosta
+                </p>
               )}
-              {round && !round.served && (
-                <button
-                  type="button"
-                  onClick={() => handleServe(participant)}
-                  disabled={servingId === participant.id}
-                  className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-50"
-                >
-                  {servingId === participant.id ? "Kuitataan..." : "Kuittaa tarjoiltu"}
-                </button>
-              )}
+
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                {entry.nextRound && (
+                  <button
+                    type="button"
+                    onClick={() => handleServe(entry.participantId, entry.nextRound!.roundId)}
+                    disabled={busyParticipantId === entry.participantId}
+                    className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-50"
+                  >
+                    {busyParticipantId === entry.participantId ? "Kuitataan..." : "Kuittaa tarjoiltu"}
+                  </button>
+                )}
+                <label className="flex items-center gap-2 text-sm text-muted">
+                  <input
+                    type="checkbox"
+                    checked={excluded}
+                    onChange={(e) => handleExclusionToggle(entry.participantId, e.target.checked)}
+                  />
+                  Ei osallistu tähän tastingiin
+                </label>
+              </div>
             </div>
           );
         })}
       </div>
       {actionError && <p className="text-sm text-danger">{actionError}</p>}
     </div>
+  );
+}
+
+export default function OrganizerDashboard() {
+  return (
+    <AdminLoginGate>
+      <OrganizerDashboardInner />
+    </AdminLoginGate>
   );
 }

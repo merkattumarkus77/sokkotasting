@@ -82,7 +82,11 @@ kutsupaikat (`events.ts` nykyisin, myöhemmin uusi tastings-luonti) pitää päi
    "vaihe valmis vasta kun build ✓" tulkitaan tiukasti jokaiselle A–H-vaiheelle erikseen.
 
 **Valmis kun:** uudet tyypit ja datakerroksen funktiot ovat olemassa ja yksikkötestattavissa (`roundRobin`
-yhä vihreä), vaikka UI ei vielä käännykään täysin.
+yhä vihreä). **Päätös (käyttäjä, 2026-09-06):** Vaiheet B, C ja D ajetaan yhtenä committisarjana —
+`typecheck`/`lint`/`test`/`build`-porttia ei vaadita B:n eikä C:n päätteeksi erikseen, koska
+tietomallin vaihto rikkoo nykyisen UI:n väistämättä ennen kuin se on johdotettu uudelleen (D).
+Jokainen commit on silti oma looginen askel Git-historiassa; täysi vihreä build vaaditaan vasta
+Vaihe D:n lopussa, ja `docs/PROGRESS.md` päivitetään yhtenä B+C+D-kokonaisuutena tuolloin.
 
 **Riski:** matala teknisesti, mutta tässä on suurin houkutus jättää `rounds`-taulukko paikalleen
 "väliaikaisesti" — CLAUDE.md:n sudenkuoppa #1. Ei tehdä niin.

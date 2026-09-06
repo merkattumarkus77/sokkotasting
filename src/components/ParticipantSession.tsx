@@ -1,18 +1,112 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import EvaluationForm from "@/components/EvaluationForm";
-import { getActiveEvent } from "@/lib/events";
-import { loginParticipant, subscribeToParticipant } from "@/lib/participants";
-import { clearSession, loadSession, saveSession, type StoredSession } from "@/lib/session";
-import type { Participant, TastingEvent } from "@/lib/types";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import EvaluationForm, { type GuessOption } from "@/components/EvaluationForm";
+import { subscribeToParticipant } from "@/lib/clientRealtime";
+import type { TastingDoc } from "@/lib/types";
 
 type View = "restoring" | "login" | "active";
+type SanitizedTasting = Omit<TastingDoc, "items">;
+
+interface ParticipantSession {
+  role: "participant";
+  eventId: string;
+  participantId: string;
+  sessionId: string;
+}
+
+interface MyRoundResponse {
+  status: "not_started" | "waiting_service" | "serving" | "done";
+  roundId?: string;
+  roundIndex?: number;
+  totalRounds: number;
+  completedRounds?: number;
+  hasGuessing?: boolean;
+  guessOptions?: GuessOption[];
+}
+
+function TastingCard({ tasting }: { tasting: SanitizedTasting }) {
+  const [myRound, setMyRound] = useState<MyRoundResponse | null>(null);
+  const [ensuring, setEnsuring] = useState(false);
+
+  useEffect(() => {
+    if (tasting.status !== "in_progress") return;
+    let cancelled = false;
+
+    async function poll() {
+      const res = await fetch(`/api/tastings/${tasting.id}/my-round`);
+      if (!res.ok || cancelled) return;
+      setMyRound((await res.json()) as MyRoundResponse);
+    }
+
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [tasting.id, tasting.status]);
+
+  useEffect(() => {
+    if (myRound?.status !== "not_started" || ensuring) return;
+    setEnsuring(true);
+    fetch(`/api/tastings/${tasting.id}/ensure-rounds`, { method: "POST" })
+      .then(() => fetch(`/api/tastings/${tasting.id}/my-round`))
+      .then((res) => res.json())
+      .then(setMyRound)
+      .finally(() => setEnsuring(false));
+  }, [myRound?.status, tasting.id, ensuring]);
+
+  function handleSubmitted() {
+    fetch(`/api/tastings/${tasting.id}/my-round`)
+      .then((res) => res.json())
+      .then(setMyRound);
+  }
+
+  let body: ReactNode;
+
+  if (tasting.status === "pending") {
+    body = <p className="text-sm text-muted">Odottaa käynnistystä</p>;
+  } else if (tasting.status === "completed") {
+    body = <p className="text-sm text-success">Tulokset valmiina</p>;
+  } else if (!myRound || myRound.status === "not_started") {
+    body = <p className="text-sm text-muted">Ladataan...</p>;
+  } else if (myRound.status === "waiting_service") {
+    body = (
+      <p className="text-sm text-muted">
+        Odottaa tarjoilua ({myRound.completedRounds}/{myRound.totalRounds})
+      </p>
+    );
+  } else if (myRound.status === "serving") {
+    body = (
+      <EvaluationForm
+        tastingId={tasting.id}
+        roundId={myRound.roundId!}
+        roundIndex={myRound.roundIndex!}
+        totalRounds={myRound.totalRounds}
+        hasGuessing={Boolean(tasting.hasGuessing)}
+        guessOptions={myRound.guessOptions ?? []}
+        onSubmitted={handleSubmitted}
+      />
+    );
+  } else {
+    body = (
+      <p className="text-sm text-success">Kaikki {myRound.totalRounds} kierrosta suoritettu.</p>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-5">
+      <p className="mb-2 font-medium">{tasting.name}</p>
+      {body}
+    </div>
+  );
+}
 
 export default function ParticipantSession() {
   const [view, setView] = useState<View>("restoring");
-  const [participant, setParticipant] = useState<Participant | null>(null);
-  const [event, setEvent] = useState<TastingEvent | null>(null);
+  const [session, setSession] = useState<ParticipantSession | null>(null);
+  const [participantName, setParticipantName] = useState("");
   const [info, setInfo] = useState("");
 
   const [name, setName] = useState("");
@@ -20,91 +114,86 @@ export default function ParticipantSession() {
   const [loggingIn, setLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState("");
 
-  const unsubscribeRef = useRef<(() => void) | null>(null);
+  const [tastings, setTastings] = useState<SanitizedTasting[]>([]);
 
   useEffect(() => {
-    return () => unsubscribeRef.current?.();
-  }, []);
-
-  useEffect(() => {
-    async function restore() {
-      const stored = loadSession();
-      if (!stored) {
-        setView("login");
-        return;
-      }
-      try {
-        const activeEvent = await getActiveEvent();
-        if (!activeEvent || activeEvent.id !== stored.eventId) {
-          clearSession();
-          setInfo("Edellinen tasting on päättynyt tai vaihtunut. Kirjaudu uudelleen.");
+    fetch("/api/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.session?.role === "participant") {
+          setSession(data.session);
+          setView("active");
+        } else {
           setView("login");
-          return;
         }
-        setEvent(activeEvent);
-        watchParticipant(stored);
-      } catch {
-        clearSession();
-        setView("login");
-      }
-    }
-    restore();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      })
+      .catch(() => setView("login"));
   }, []);
 
-  function watchParticipant(stored: StoredSession) {
-    unsubscribeRef.current?.();
-    unsubscribeRef.current = subscribeToParticipant(stored.participantId, (p) => {
-      if (!p) {
-        unsubscribeRef.current?.();
-        clearSession();
-        setInfo("Osallistujatietoja ei löytynyt. Kirjaudu uudelleen.");
-        setView("login");
-        return;
-      }
-      if (p.sessionToken !== stored.sessionToken) {
-        unsubscribeRef.current?.();
-        clearSession();
+  useEffect(() => {
+    if (!session) return;
+    return subscribeToParticipant(session.eventId, session.participantId, (participant) => {
+      if (!participant) return;
+      setParticipantName(participant.name);
+      if (participant.activeSessionId !== session.sessionId) {
         setInfo("Kirjauduit sisään toisella laitteella, joten tämä istunto suljettiin.");
+        setSession(null);
         setView("login");
-        return;
       }
-      setParticipant(p);
-      setView("active");
     });
-  }
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+
+    async function poll() {
+      const res = await fetch("/api/tastings");
+      if (!res.ok || cancelled) return;
+      const data = await res.json();
+      setTastings(data.tastings);
+    }
+
+    poll();
+    const id = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [session]);
 
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
     setLoggingIn(true);
     setLoginError("");
     try {
-      const result = await loginParticipant(name, password);
-      const stored: StoredSession = {
-        eventId: result.event.id,
-        participantId: result.participant.id,
-        participantName: result.participant.name,
-        sessionToken: result.sessionToken,
-      };
-      saveSession(stored);
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "participant", nickname: name, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error ?? "Kirjautuminen epäonnistui.");
+        return;
+      }
       setInfo("");
-      setEvent(result.event);
-      watchParticipant(stored);
-    } catch (error) {
-      setLoginError(error instanceof Error ? error.message : "Kirjautuminen epäonnistui.");
+      const me = await fetch("/api/me").then((r) => r.json());
+      setSession(me.session);
+      setView("active");
+    } catch {
+      setLoginError("Yhteys palvelimeen epäonnistui.");
     } finally {
       setLoggingIn(false);
     }
   }
 
-  function handleLogout() {
-    unsubscribeRef.current?.();
-    clearSession();
-    setParticipant(null);
-    setEvent(null);
-    setInfo("");
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setSession(null);
     setName("");
     setPassword("");
+    setInfo("");
     setView("login");
   }
 
@@ -148,58 +237,29 @@ export default function ParticipantSession() {
     );
   }
 
-  if (!participant || !event) return null;
-
-  const totalRounds = participant.rounds.length;
-  const currentRound =
-    participant.currentRoundIndex < totalRounds
-      ? participant.rounds[participant.currentRoundIndex]
-      : null;
-
-  if (currentRound && currentRound.served && !currentRound.completed) {
-    return (
-      <div className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-surface p-6">
-        <EvaluationForm participant={participant} event={event} round={currentRound} />
-        <button
-          type="button"
-          onClick={handleLogout}
-          className="self-center text-sm text-muted underline underline-offset-4"
-        >
-          Kirjaudu ulos
-        </button>
-      </div>
-    );
-  }
+  if (!session) return null;
 
   return (
-    <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-xl border border-border bg-surface p-6 text-center">
-      <div>
+    <div className="flex w-full max-w-sm flex-col gap-4">
+      <div className="text-center">
         <p className="text-sm text-muted">Kirjautunut nimellä</p>
-        <p className="text-lg font-medium">{participant.name}</p>
+        <p className="text-lg font-medium">{participantName}</p>
       </div>
 
-      {!currentRound && (
-        <p className="text-success">
-          Kaikki {totalRounds} kierrosta suoritettu. Kiitos osallistumisesta!
-        </p>
+      {tastings.length === 0 && (
+        <p className="text-center text-sm text-muted">Ei vielä tastingeja tässä tapahtumassa.</p>
       )}
 
-      {currentRound && !currentRound.served && (
-        <>
-          <p className="text-xl font-semibold">
-            {participant.currentRoundIndex === 0 ? "Odottaa maistiaisia" : "Odottaa seuraavaa kierrosta"}
-          </p>
-          <p className="text-sm text-muted">
-            Kierros {currentRound.index + 1}/{totalRounds}. Odota, että järjestäjä tarjoilee
-            seuraavat näytteet.
-          </p>
-        </>
-      )}
+      <div className="flex flex-col gap-4">
+        {tastings.map((tasting) => (
+          <TastingCard key={tasting.id} tasting={tasting} />
+        ))}
+      </div>
 
       <button
         type="button"
         onClick={handleLogout}
-        className="text-sm text-muted underline underline-offset-4"
+        className="self-center text-sm text-muted underline underline-offset-4"
       >
         Kirjaudu ulos
       </button>
