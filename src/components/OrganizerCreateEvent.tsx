@@ -45,6 +45,7 @@ function OrganizerCreateEventInner() {
   const [guessingEnabled, setGuessingEnabled] = useState(true);
   const [hasBronzeMatch, setHasBronzeMatch] = useState(false);
   const [seedingRounds, setSeedingRounds] = useState(SEEDING_ROUNDS_DEFAULT);
+  const [timeLimitMinutesInput, setTimeLimitMinutesInput] = useState("");
   const [tastingError, setTastingError] = useState("");
   const [creatingTasting, setCreatingTasting] = useState(false);
   const [startingId, setStartingId] = useState<string | null>(null);
@@ -133,6 +134,21 @@ function OrganizerCreateEventInner() {
       : 0;
   const swissSize = itemCount >= SWISS_MIN_ITEMS ? bracketSize(itemCount) : 0;
 
+  // SPEC 10: kokonaiskesto = pareja per osallistuja × kierrosaika, varoita jos > 3h.
+  // Swississä alkusarjan pituus ei ole tiedossa etukäteen — käytetään
+  // maksimia (seedingRounds+4 kierrosta täydellä floor(N/2) parimäärällä)
+  // samasta syystä kuin raaka-ainelaskennassa: parempi varoittaa liikaa
+  // kuin liian vähän.
+  const swissMaxSeedingPairs =
+    logic === "SWISS_TOURNAMENT" && itemCount >= SWISS_MIN_ITEMS
+      ? (seedingRounds + 4) * Math.floor(itemCount / 2)
+      : 0;
+  const totalPairsEstimate =
+    logic === "ROUND_ROBIN" ? roundRobinPairs : swissBracketMatches + swissMaxSeedingPairs;
+  const timeLimitMinutesNum = Number(timeLimitMinutesInput) || 0;
+  const estimatedDurationMinutes = totalPairsEstimate * timeLimitMinutesNum;
+  const showDurationWarning = timeLimitMinutesNum > 0 && estimatedDurationMinutes > 180;
+
   async function handleCreateTasting(event: FormEvent) {
     event.preventDefault();
     setTastingError("");
@@ -161,7 +177,7 @@ function OrganizerCreateEventInner() {
           portionUnit,
           hasGuessing: guessingEnabled,
           hasBronzeMatch: logic === "SWISS_TOURNAMENT" ? hasBronzeMatch : false,
-          timeLimitMinutes: null,
+          timeLimitMinutes: timeLimitMinutesNum > 0 ? timeLimitMinutesNum : null,
           seedingRounds: logic === "SWISS_TOURNAMENT" ? seedingRounds : SEEDING_ROUNDS_DEFAULT,
         }),
       });
@@ -172,6 +188,7 @@ function OrganizerCreateEventInner() {
       }
       setTastingName("");
       setProductNames(Array(minItems).fill(""));
+      setTimeLimitMinutesInput("");
       setTastings(await fetchTastings());
     } catch {
       setTastingError("Yhteys palvelimeen epäonnistui.");
@@ -352,6 +369,17 @@ function OrganizerCreateEventInner() {
                 </label>
               </div>
 
+              <label className="flex flex-col gap-1 text-sm">
+                Kierrosaika minuutteina (valinnainen — tyhjä = ei ajastinta)
+                <input
+                  type="number"
+                  min={1}
+                  value={timeLimitMinutesInput}
+                  onChange={(e) => setTimeLimitMinutesInput(e.target.value)}
+                  className="w-24 rounded-lg border border-border bg-surface-raised px-3 py-2 outline-none focus:border-accent"
+                />
+              </label>
+
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -401,7 +429,20 @@ function OrganizerCreateEventInner() {
                     </p>
                   </>
                 )}
+                {timeLimitMinutesNum > 0 && (
+                  <p className="mt-1">
+                    Arvioitu kokonaiskesto: ~{estimatedDurationMinutes} min
+                    {logic === "SWISS_TOURNAMENT" ? " (maksimiarvio)" : ""}
+                  </p>
+                )}
               </div>
+
+              {showDurationWarning && (
+                <p className="rounded-lg border border-danger/50 bg-danger/10 p-3 text-sm text-danger">
+                  Kokonaiskesto ylittää 3 tuntia (~{estimatedDurationMinutes} min). Harkitse
+                  lyhyempää kierrosaikaa tai pienempää tuotemäärää.
+                </p>
+              )}
 
               <button
                 type="submit"

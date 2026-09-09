@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { createBeepPlayer, type BeepPlayer } from "@/lib/audioBeep";
+import CountdownTimer from "@/components/CountdownTimer";
 import EvaluationForm, { type GuessOption } from "@/components/EvaluationForm";
 import { subscribeToParticipant } from "@/lib/clientRealtime";
 import type { TastingDoc } from "@/lib/types";
 
 type View = "restoring" | "login" | "active";
-type SanitizedTasting = Omit<TastingDoc, "items">;
+type SanitizedTasting = Omit<TastingDoc, "items"> & { excluded: boolean };
 
 interface ParticipantSession {
   role: "participant";
@@ -28,16 +30,28 @@ interface MyRoundResponse {
   totalRounds: number | null;
   completedRounds?: number;
   phase?: string;
+  servedAt?: number | null;
   hasGuessing?: boolean;
   guessOptions?: GuessOption[];
 }
 
-function TastingCard({ tasting }: { tasting: SanitizedTasting }) {
+interface TastingCardProps {
+  tasting: SanitizedTasting;
+  clockOffsetMs: number;
+  audioGranted: boolean;
+  beepPlayer: BeepPlayer | null;
+}
+
+function TastingCard({ tasting, clockOffsetMs, audioGranted, beepPlayer }: TastingCardProps) {
   const [myRound, setMyRound] = useState<MyRoundResponse | null>(null);
   const [ensuring, setEnsuring] = useState(false);
 
+  const isTimed = tasting.timeLimitMinutes != null;
+  const locked =
+    tasting.status === "in_progress" && !tasting.excluded && isTimed && !audioGranted;
+
   useEffect(() => {
-    if (tasting.status !== "in_progress") return;
+    if (tasting.status !== "in_progress" || tasting.excluded || locked) return;
     let cancelled = false;
 
     async function poll() {
@@ -52,7 +66,7 @@ function TastingCard({ tasting }: { tasting: SanitizedTasting }) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [tasting.id, tasting.status]);
+  }, [tasting.id, tasting.status, tasting.excluded, locked]);
 
   useEffect(() => {
     if (myRound?.status !== "not_started" || ensuring) return;
@@ -72,10 +86,18 @@ function TastingCard({ tasting }: { tasting: SanitizedTasting }) {
 
   let body: ReactNode;
 
-  if (tasting.status === "pending") {
+  if (tasting.excluded) {
+    body = <p className="text-sm text-muted">Et osallistu</p>;
+  } else if (tasting.status === "pending") {
     body = <p className="text-sm text-muted">Odottaa käynnistystä</p>;
   } else if (tasting.status === "completed") {
     body = <p className="text-sm text-success">Tulokset valmiina</p>;
+  } else if (locked) {
+    body = (
+      <p className="text-sm text-muted">
+        Lukittu (äänilupa puuttuu) — salli äänimerkit yllä olevalla painikkeella jatkaaksesi.
+      </p>
+    );
   } else if (!myRound || myRound.status === "not_started") {
     body = <p className="text-sm text-muted">Ladataan...</p>;
   } else if (myRound.status === "waiting_service") {
@@ -90,17 +112,27 @@ function TastingCard({ tasting }: { tasting: SanitizedTasting }) {
     );
   } else if (myRound.status === "serving") {
     body = (
-      <EvaluationForm
-        tastingId={tasting.id}
-        roundId={myRound.roundId!}
-        roundIndex={myRound.roundIndex!}
-        totalRounds={myRound.totalRounds}
-        logic={tasting.logic}
-        phase={myRound.phase}
-        hasGuessing={Boolean(tasting.hasGuessing)}
-        guessOptions={myRound.guessOptions ?? []}
-        onSubmitted={handleSubmitted}
-      />
+      <div className="flex flex-col gap-3">
+        {isTimed && myRound.servedAt != null && (
+          <CountdownTimer
+            servedAtMs={myRound.servedAt}
+            timeLimitMinutes={tasting.timeLimitMinutes!}
+            clockOffsetMs={clockOffsetMs}
+            beepPlayer={beepPlayer}
+          />
+        )}
+        <EvaluationForm
+          tastingId={tasting.id}
+          roundId={myRound.roundId!}
+          roundIndex={myRound.roundIndex!}
+          totalRounds={myRound.totalRounds}
+          logic={tasting.logic}
+          phase={myRound.phase}
+          hasGuessing={Boolean(tasting.hasGuessing)}
+          guessOptions={myRound.guessOptions ?? []}
+          onSubmitted={handleSubmitted}
+        />
+      </div>
     );
   } else {
     body = (
@@ -125,6 +157,7 @@ export default function ParticipantSession() {
   const [session, setSession] = useState<ParticipantSession | null>(null);
   const [participantName, setParticipantName] = useState("");
   const [info, setInfo] = useState("");
+  const [clockOffsetMs, setClockOffsetMs] = useState(0);
 
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -132,11 +165,15 @@ export default function ParticipantSession() {
   const [loginError, setLoginError] = useState("");
 
   const [tastings, setTastings] = useState<SanitizedTasting[]>([]);
+  const [beepPlayer, setBeepPlayer] = useState<BeepPlayer | null>(null);
 
   useEffect(() => {
     fetch("/api/me")
       .then((res) => res.json())
       .then((data) => {
+        if (typeof data.serverTime === "number") {
+          setClockOffsetMs(data.serverTime - Date.now());
+        }
         if (data.session?.role === "participant") {
           setSession(data.session);
           setView("active");
@@ -179,6 +216,15 @@ export default function ParticipantSession() {
     };
   }, [session]);
 
+  useEffect(() => {
+    return () => beepPlayer?.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handleAllowSound() {
+    setBeepPlayer(createBeepPlayer());
+  }
+
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
     setLoggingIn(true);
@@ -196,6 +242,9 @@ export default function ParticipantSession() {
       }
       setInfo("");
       const me = await fetch("/api/me").then((r) => r.json());
+      if (typeof me.serverTime === "number") {
+        setClockOffsetMs(me.serverTime - Date.now());
+      }
       setSession(me.session);
       setView("active");
     } catch {
@@ -256,6 +305,12 @@ export default function ParticipantSession() {
 
   if (!session) return null;
 
+  // SPEC 9: only ask for audio permission when it would actually matter —
+  // at least one timed tasting the participant isn't excluded from is live.
+  const needsAudioPermission =
+    !beepPlayer &&
+    tastings.some((t) => t.status === "in_progress" && !t.excluded && t.timeLimitMinutes != null);
+
   return (
     <div className="flex w-full max-w-sm flex-col gap-4">
       <div className="text-center">
@@ -263,13 +318,29 @@ export default function ParticipantSession() {
         <p className="text-lg font-medium">{participantName}</p>
       </div>
 
+      {needsAudioPermission && (
+        <button
+          type="button"
+          onClick={handleAllowSound}
+          className="rounded-lg border border-accent px-4 py-2 text-sm font-medium text-accent hover:bg-accent/10"
+        >
+          Salli äänimerkit
+        </button>
+      )}
+
       {tastings.length === 0 && (
         <p className="text-center text-sm text-muted">Ei vielä tastingeja tässä tapahtumassa.</p>
       )}
 
       <div className="flex flex-col gap-4">
         {tastings.map((tasting) => (
-          <TastingCard key={tasting.id} tasting={tasting} />
+          <TastingCard
+            key={tasting.id}
+            tasting={tasting}
+            clockOffsetMs={clockOffsetMs}
+            audioGranted={Boolean(beepPlayer)}
+            beepPlayer={beepPlayer}
+          />
         ))}
       </div>
 

@@ -80,6 +80,9 @@ export async function GET(
       totalRounds,
       completedRounds: state.currentRoundIndex,
       phase: state.phase,
+      // Server timestamp, needed for the countdown (SPEC 9) — the client
+      // must never trust its own clock for this.
+      servedAt: round.servedAt,
       hasGuessing: tasting.hasGuessing,
       guessOptions,
     });

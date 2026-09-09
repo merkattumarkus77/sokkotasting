@@ -304,3 +304,71 @@ käynnistys, `ensure-rounds`, tasapelin hylkäys (400), kelvollinen lähetys, j�
 dashboard oikeilla nimillä ja `totalRounds: null`. Round Robin -polku todennettu regressiona
 samalla ajolla (tasapeli 25–25 edelleen sallittu, eteneminen toimii). Tuotantobundlesta
 vahvistettu ettei mikään palvelinpuolen salaisuus tai `firebase-admin` esiinny.
+
+## Vaihe F — Ajastin ja äänet ✅
+
+**Tehty:**
+
+- `lib/timer.ts` (puhdas funktio): `computeRemainingMs` (`servedAt + timeLimitMinutes×60000 - nyt`,
+  menee tarkoituksella miinukselle), `computeTimerPhase` joka toteuttaa SPEC 9:n taulukon täsmälleen
+  — vihreä (100–35 %) → oranssi (35–25 %) → punainen (25–15 %) → punainen+syke (15–5 %) →
+  syke+rauhallinen piippaus (5–0 %) → ylityksen tila (fonttikoko kasvaa, hälyttävä tausta,
+  vaativampi ääni, alle 0 %). 16 Vitest-testiä kattaa SPEC 15.1:n täsmälliset rajat
+  (`p = 0.36, 0.35, 0.26, 0.25, 0.16, 0.15, 0.06, 0.05, 0.0, −0.1`) sekä sen, ettei negatiivinen
+  aika koskaan lukitse mitään — `TimerPhase`-tyyppi ei edes sisällä lukitus-käsitettä.
+- `lib/audioBeep.ts` (asiakaspuoli, ei testejä — Web Audio -API ei ole mielekkäästi
+  yksikkötestattavissa): `createBeepPlayer()` luo ja käynnistää `AudioContext`in synkronisesti
+  käyttäjän eleestä (selainten autoplay-esto vaatii tämän), piippaukset oskillaattorilla, ei
+  äänitiedostoja. Rauhallinen piippaus (5–0 %) yksi sävy; ylityksen ääni kaksi nopeaa sävyä —
+  huomattavasti vaativampi mutta ei "herätyskellomainen" jatkuva hälytys, kuten SPEC vaatii.
+- `components/CountdownTimer.tsx`: laskee jäljellä olevan ajan aina `Date.now()`-erotuksesta
+  (korjattuna `clockOffsetMs`:llä), ei koskaan vähentämällä laskurista — `setInterval` (1 s) ja
+  `visibilitychange`-kuuntelija molemmat kutsuvat samaa tuoretta laskentaa, joten taustavälilehden
+  hidastuma ei näy vääränä aikana. Piippaus laukeaa kerran per tilasiirtymä (`state.sound`
+  muuttuu), ei toistuvasti joka sekunti — välttää ärsyttävän jatkuvan äänen.
+- **Kellosiirtymä**: `GET /api/me` palautti jo `serverTime`:n (Vaihe B+C+D:stä) — `ParticipantSession`
+  laskee `clockOffsetMs = serverTime - Date.now()` kerran istunnon alussa (kirjautuessa ja
+  istuntoa palautettaessa) ja välittää sen `CountdownTimer`:lle propina.
+- **Äänilupa ja lukitut tastingit**: `ParticipantSession` näyttää "Salli äänimerkit" -painikkeen
+  vain kun jokin käynnissä oleva, ei-poissuljettu tasting on ajastettu eikä lupaa ole vielä
+  annettu. `TastingCard` näyttää "Lukittu (äänilupa puuttuu)" -tilan tarkalleen SPEC 11.2:n
+  seitsemästä nimetystä tilasta yhtenä; ajastamattomat tastingit eivät koskaan lukitu.
+- **"Et osallistu" -tila korjattu samalla** (SPEC 11.2:n seitsemästä tilasta oli tähän asti
+  toteuttamatta viisi, tämä oli kuudes — Vaihe D:n aikana jäänyt aukko): `GET /api/tastings`
+  palauttaa nyt osallistujalle myös `excluded: boolean` per tasting (`lib/participants.ts`:n
+  `getParticipant`-kutsu, verrattuna `excludedTastingIds`-listaan). Ilman tätä poissuljettu
+  osallistuja olisi jäänyt jumiin "Ladataan..."-tekstiin, koska `ensure-rounds` palauttaa 403:n
+  jota UI ei aiemmin käsitellyt mitenkään.
+- **Luontilomake**: uusi "Kierrosaika minuutteina (valinnainen)" -kenttä (aiemmin aina `null`).
+  SPEC 10:n kokonaiskesto-varoitus (>3h) toteutettu: Round Robinille tarkka pareja×kierrosaika,
+  Swississä maksimiarvio (`(seedingRounds+4) × ⌊N/2⌋ + pudotuspeliottelut`) samasta syystä kuin
+  raaka-ainelaskennassakin — parempi varoittaa liikaa kuin liian vähän.
+- `EvaluationForm.tsx`, `my-round`-reitti: `servedAt` mukaan API-vastaukseen kun kierros on
+  `serving`-tilassa (ajastimen tarvitsema palvelinaikaleima).
+
+**Tietoturva:** ei muutoksia luottamusrajaan — ajastin on puhtaasti asiakaspuolen esitystä
+palvelimen jo antamasta `servedAt`-arvosta, ei uutta kirjoituspolkua eikä uutta tietoa joka
+paljastaisi tuotteiden identiteettiä.
+
+**Ei tehty / jätetty auki:**
+
+- Todellista visuaalista/interaktiivista selainvahvistusta (napin klikkaus, äänen kuuluminen,
+  värien vaihtuminen) ei tehty — `chromium-cli` ei ollut saatavilla tässä ympäristössä, ja sen
+  asentaminen nyt olisi mennyt CLAUDE.md:n oman säännön vastaisesti
+  ("Ei käyttöliittymätestausta ennen viimeistä vaihetta"). Todennettu sen sijaan projektin oman
+  testausfilosofian mukaisesti: puhtaan ajastinlogiikan yksikkötestit (16 testiä, SPEC 15.1:n
+  täsmälliset rajat) ja koko HTTP-polku curlilla (`timeLimitMinutes`/`excluded`/`servedAt`
+  virtaavat oikein API-vastauksissa). Playwright-savutesti (Vaihe H) kattaa aidon
+  selainvuorovaikutuksen myöhemmin.
+- Ajastimen tarkka ulkoasu (esim. kortin taustaväri "hälyttävässä" tilassa) on toteutettu
+  parhaan tulkinnan mukaan olemassa olevilla teemaväreillä (`text-danger`, `bg-danger/20`,
+  `text-orange-500` — viimeinen on Tailwindin valmis väri, ei projektin omaa teemamuuttujaa,
+  koska nykyisessä teemassa ei ole erillistä "oranssi"-tokenia). Käyttäjä voi halutessaan
+  hienosäätää ulkoasua kun näkee sen livenä.
+
+**Tarkistettu:** `npm run typecheck` ✓, `npm run lint` ✓, `npm run test` ✓ (157/157),
+`npm run build` ✓. `servedAt`, `timeLimitMinutes` ja `excluded` -kenttien läpivienti todennettu
+curlilla koko HTTP-API:n läpi emulaattoria vasten (kirjautuminen, `ensure-rounds`, tarjoilun
+kuittaus, `my-round`). Vahvistettu koodista, ettei mikään UI-elementti koskaan disabloi
+lähetyspainiketta ajastimen tilan perusteella — ainoa `disabled`-ehto on lomakkeen oma
+`submitting`-tila. Tuotantobundlesta vahvistettu ettei mikään palvelinpuolen salaisuus esiinny.

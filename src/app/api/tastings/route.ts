@@ -3,13 +3,19 @@ import { getSession, requireAdmin } from "@/lib/apiAuth";
 import { handleApiError } from "@/lib/apiResponse";
 import { CreateTastingSchema } from "@/lib/apiSchemas";
 import { getActiveEvent } from "@/lib/events";
+import { getParticipant } from "@/lib/participants";
 import { createTasting, listTastings } from "@/lib/tastings";
 import type { TastingDoc } from "@/lib/types";
 
 // Participants must never receive item real names/codes (SPEC 5.3) — the
 // tasting document itself is not client-readable via Firestore for exactly
 // this reason (see firestore.rules), so both roles fetch it through here.
-function sanitizeForParticipant(tasting: TastingDoc): Omit<TastingDoc, "items"> {
+// `excluded` reflects this specific participant's own opt-out (SPEC 3), so
+// the card list can show the "Et osallistu" state (SPEC 11.2).
+function sanitizeForParticipant(
+  tasting: TastingDoc,
+  excludedTastingIds: string[]
+): Omit<TastingDoc, "items"> & { excluded: boolean } {
   return {
     id: tasting.id,
     eventId: tasting.eventId,
@@ -26,6 +32,7 @@ function sanitizeForParticipant(tasting: TastingDoc): Omit<TastingDoc, "items"> 
     statsCommitted: tasting.statsCommitted,
     createdAt: tasting.createdAt,
     completedAt: tasting.completedAt,
+    excluded: excludedTastingIds.includes(tasting.id),
   };
 }
 
@@ -46,7 +53,12 @@ export async function GET() {
     if (session.role === "admin") {
       return NextResponse.json({ tastings });
     }
-    return NextResponse.json({ tastings: tastings.map(sanitizeForParticipant) });
+
+    const participant = await getParticipant(session.eventId, session.participantId);
+    const excludedTastingIds = participant?.excludedTastingIds ?? [];
+    return NextResponse.json({
+      tastings: tastings.map((tasting) => sanitizeForParticipant(tasting, excludedTastingIds)),
+    });
   } catch (error) {
     return handleApiError(error);
   }
