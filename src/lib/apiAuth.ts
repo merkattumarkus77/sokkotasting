@@ -1,5 +1,6 @@
 import "server-only";
 import { cookies } from "next/headers";
+import { getEvent } from "@/lib/events";
 import {
   SESSION_COOKIE_MAX_AGE_SECONDS,
   SESSION_COOKIE_NAME,
@@ -38,6 +39,22 @@ export async function requireParticipant(): Promise<ParticipantSessionPayload> {
   const session = await getSession();
   if (!session || session.role !== "participant") {
     throw new ApiError(401, "Kirjaudu osallistujana ensin.");
+  }
+  return session;
+}
+
+/**
+ * SPEC 4.3: closing an event must invalidate its participants' sessions
+ * "seuraavalla API-kutsulla" — the JWT itself stays valid for its full TTL
+ * (jose has no built-in revocation), so every participant-authenticated
+ * route must re-check the event's status here instead of trusting the
+ * cookie alone.
+ */
+export async function requireActiveParticipant(): Promise<ParticipantSessionPayload> {
+  const session = await requireParticipant();
+  const event = await getEvent(session.eventId);
+  if (!event || event.status !== "active") {
+    throw new ApiError(401, "Tapahtuma on suljettu. Kirjaudu uudelleen.");
   }
   return session;
 }

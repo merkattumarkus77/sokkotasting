@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireParticipant } from "@/lib/apiAuth";
+import { requireActiveParticipant } from "@/lib/apiAuth";
 import { handleApiError } from "@/lib/apiResponse";
 import { pairsPerParticipantCount } from "@/lib/roundRobin";
 import { getCurrentRound, getGuessCounts, getParticipantState } from "@/lib/rounds";
@@ -19,7 +19,7 @@ export async function GET(
   { params }: { params: Promise<{ tastingId: string }> }
 ) {
   try {
-    const session = await requireParticipant();
+    const session = await requireActiveParticipant();
     const { tastingId } = await params;
 
     const tasting = await getTasting(session.eventId, tastingId);

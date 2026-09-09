@@ -1,8 +1,12 @@
 import "server-only";
+import { mergeCategoryStats, mergeKnownItems } from "@/lib/categoryStats";
 import { adminDb } from "@/lib/firebaseAdmin";
 import { assignItemCodes } from "@/lib/itemCodes";
 import { MAX_TASTINGS_PER_EVENT } from "@/lib/limits";
-import type { PortionUnit, TastingDoc, TastingLogic } from "@/lib/types";
+import { slugify } from "@/lib/normalize";
+import { aggregateGroupStats, distinctParticipantCount } from "@/lib/roundAggregation";
+import { submittedRoundsQuery } from "@/lib/rounds";
+import type { CategoryDoc, EventDoc, PortionUnit, RoundDoc, TastingDoc, TastingLogic } from "@/lib/types";
 
 function tastingsRef(eventId: string) {
   return adminDb.collection("events").doc(eventId).collection("tastings");
@@ -79,5 +83,74 @@ export async function startTasting(eventId: string, tastingId: string): Promise<
     const tasting = doc.data() as TastingDoc;
     if (tasting.status !== "pending") return;
     tx.update(ref, { status: "in_progress" });
+  });
+}
+
+function categoriesRef() {
+  return adminDb.collection("categories");
+}
+
+/**
+ * SPEC 5 "Päätä tasting ja julkaise" + SPEC 13 all-time stats. One
+ * transaction: idempotent on both the status transition (a second call is a
+ * no-op, CLAUDE.md rule 5 — double-click can't break anything) and the
+ * stats commit specifically (gated on `statsCommitted`, so even calling
+ * complete() again after a successful commit never double-counts).
+ */
+export async function completeTasting(eventId: string, tastingId: string): Promise<void> {
+  const ref = tastingsRef(eventId).doc(tastingId);
+  const eventRef = adminDb.collection("events").doc(eventId);
+
+  await adminDb.runTransaction(async (tx) => {
+    const tastingDoc = await tx.get(ref);
+    if (!tastingDoc.exists) throw new Error("TASTING_NOT_FOUND");
+    const tasting = tastingDoc.data() as TastingDoc;
+    if (tasting.status === "completed") return;
+
+    const now = Date.now();
+    const update: Partial<TastingDoc> = { status: "completed", completedAt: now };
+
+    if (!tasting.statsCommitted) {
+      const eventDoc = await tx.get(eventRef);
+      const event = eventDoc.exists ? (eventDoc.data() as EventDoc) : null;
+
+      const roundsSnapshot = await tx.get(submittedRoundsQuery(eventId, tastingId));
+      const rounds = roundsSnapshot.docs.map((d) => d.data() as RoundDoc);
+      const groupStats = aggregateGroupStats(rounds);
+      const participantCount = distinctParticipantCount(rounds);
+
+      if (event && groupStats.size > 0) {
+        const categoryId = slugify(event.category);
+        const categoryRef = categoriesRef().doc(categoryId);
+        const categoryDoc = await tx.get(categoryRef);
+        const category = categoryDoc.exists ? (categoryDoc.data() as CategoryDoc) : null;
+
+        const itemNameById = new Map(tasting.items.map((item) => [item.id, item.name]));
+        const statUpdates = [...groupStats.entries()].map(([itemId, stats]) => ({
+          itemName: itemNameById.get(itemId) ?? itemId,
+          tastedPoints: stats.tastedPoints,
+          tastedPairs: stats.tastedPairs,
+        }));
+
+        const mergedStats = mergeCategoryStats(category?.stats ?? [], statUpdates, participantCount);
+        const mergedKnownItems = mergeKnownItems(
+          category?.knownItems ?? [],
+          statUpdates.map((u) => u.itemName)
+        );
+
+        const categoryUpdate: CategoryDoc = {
+          id: categoryId,
+          name: event.category,
+          knownItems: mergedKnownItems,
+          stats: mergedStats,
+          updatedAt: now,
+        };
+        tx.set(categoryRef, categoryUpdate);
+      }
+
+      update.statsCommitted = true;
+    }
+
+    tx.update(ref, update);
   });
 }

@@ -372,3 +372,92 @@ curlilla koko HTTP-API:n läpi emulaattoria vasten (kirjautuminen, `ensure-round
 kuittaus, `my-round`). Vahvistettu koodista, ettei mikään UI-elementti koskaan disabloi
 lähetyspainiketta ajastimen tilan perusteella — ainoa `disabled`-ehto on lomakkeen oma
 `submitting`-tila. Tuotantobundlesta vahvistettu ettei mikään palvelinpuolen salaisuus esiinny.
+
+## Vaihe G — Tulokset, arvauskisa ja vienti ✅
+
+**Tehty — pisteytys ja ranking (puhtaat, testatut funktiot):**
+
+- `lib/scoring.ts`: `computeItemPercentage` (SPEC 7:n kaava, `tastedPairs===0` → `null` eikä
+  koskaan `NaN`), `computeGroupRanking` (tasapelit: prosentti → voitetut parit → nimi
+  aakkosjärjestyksessä, täysin deterministinen, testattu ajamalla kahdesti ja vertaamalla).
+- `lib/guessing.ts`: `computeGuessingRanking` (SPEC 8: oikeat yhteensä → osumatarkkuus → nimi),
+  `pickGuessingEndMessage` — suomenkieliset vakioviestit kolmelle sävylle (voittaja / yli
+  keskiarvon / keskiarvo tai alle), ei ivaa eikä "parempi onni ensi kerralla" -sävyä missään
+  haarassa, testattu erikseen. Voittajasävy ei koskaan mene 0 oikeaa arvausta saaneelle
+  ykkössijalle (ontto "voitto" olisi tyhjän tuntuinen).
+- `lib/categoryStats.ts`: SPEC 13:n all-time-yhdistäminen normalisoidulla nimellä
+  (trim+lowercase, "Atria " ja "atria" sama tuote), ei koskaan jaa nollalla.
+- `lib/roundAggregation.ts`: puhdas `RoundDoc[]` → per-tuote- ja per-osallistuja-aggregaatit
+  (pisteet, parit, voitot, arvaustilastot) — Firebase-riippumaton siksi että se on testattavissa
+  ilman emulaattoria, vaikka sen kutsuja (`lib/rounds.ts`, `lib/tastings.ts`) ei ole.
+- `lib/exportMarkdown.ts`: SPEC 12:n Markdown-rakenne, järjestäjän (kaikki) ja osallistujan
+  (valintaruuduin rajattu) versiot erikseen, `formatPercentage` "—":llä nollan sijaan.
+- 46 uutta Vitest-testiä näille viidelle moduulille.
+
+**Tehty — palvelinkerros:**
+
+- `lib/tastings.ts::completeTasting`: SPEC 5:n "Päätä ja julkaise" + SPEC 13:n all-time-tilastot
+  **yhdessä transaktiossa**, kaksitasoisesti idempotentti — koko tilasiirtymä on no-op jos
+  tasting on jo `completed`, ja tilastojen kirjaus on erikseen ohitettu jos `statsCommitted`
+  on jo `true` (kaksoisklikkaus ei koskaan tuplaa tilastoja, todennettu kutsumalla kahdesti
+  emulaattoria vasten ja vertaamalla lukuja).
+- `lib/events.ts::archiveEvent`: SPEC 4.3 "Sulje tapahtuma", nyt transaktiollinen ja idempotentti.
+  SPEC 14:n reunatapaus ("tasting pending, tapahtuma arkistoidaan → completed, ei tilastoja")
+  toteutettu jaettuna `archivePendingTastings`-apufunktiona, jota kutsutaan sekä eksplisiittisestä
+  sulkemisesta että `createEvent`:n override-polusta (jälkimmäisessä tämä puuttui aiemmin
+  kokonaan — korjattu samalla).
+- `lib/apiAuth.ts::requireActiveParticipant`: SPEC 4.3:n istunnon mitätöinti — JWT itsessään
+  pysyy voimassa koko TTL:n ajan (jose ei tue peruutusta), joten jokainen osallistuja-reitti
+  tarkistaa nyt myös tuoreena että tapahtuma on yhä `active`. Kaikki neljä osallistujareittiä
+  (`ensure-rounds`, `submit`, `my-round`, `GET /api/tastings`) päivitetty käyttämään tätä.
+- `lib/results.ts`: `computeTastingResults` (ryhmäranking, per-osallistuja-pisteet, muistiinpanot,
+  arvauskisa — yksi kierrosten läpikäynti kahteen aggregaattiin), `computeEventGuessingRanking`
+  (SPEC 8:n "yhteisranking" useamman rinnakkaisen arvaus-tastingin yli, vain `completed`-tastingit
+  lasketaan mukaan).
+- Reitit: `POST /api/tastings/:id/complete` (admin), `PATCH /api/events/:id` (admin, arkistointi),
+  `GET /api/tastings/:id/results` (SPEC 11.3: 403 osallistujalle ennen `completed`-tilaa, admin
+  näkee milloin tahansa oikeilla nimillä — SPEC 11.2:n "prosenttiranking näkyy järjestäjälle jo
+  ennen julkaisua").
+
+**Tehty — käyttöliittymä:**
+
+- `components/ResultsView.tsx`: jaettu admin/osallistuja-näkymä, taulukot ryhmätuloksille,
+  per-osallistuja-pisteille (admin), omille pisteille (osallistuja), muistiinpanoille,
+  arvauskisalle (oma rivi korostettuna `text-accent`illa) ja tapahtuman yhteisrankingille.
+  Vientipainikkeet ("Kopioi leikepöydälle", "Lataa .md-tiedostona") ja osallistujalle SPEC 12:n
+  kolme valintaruutua (omat pisteet / omat muistiinpanot / ryhmän tulokset).
+- `lib/clientExport.ts`: `Blob`+`<a download>` tiedostolataukselle, `navigator.clipboard`
+  leikepöydälle — tavallisia selain-API:ta, ei Artifact-sandboxin rajoituksia koska tämä on
+  oikea itsenäinen web-sovellus.
+- `OrganizerDashboard.tsx`: "Päätä tasting ja julkaise" -painike vahvistuksella (sama
+  tarkista-ennen-toimintaa-kuvio kuin tapahtuman ylikirjoituksessa), tulokset näkyvissä aina
+  (myös ennen julkaisua, "(ennakko)"-merkinnällä), "Sulje tapahtuma" -painike ja
+  vahvistusmodaali SPEC 4.3:n varoitustekstillä.
+- `ParticipantSession.tsx`: "Tulokset valmiina" -tila hakee ja näyttää nyt oikeasti tulokset
+  (aiemmin pelkkä teksti).
+
+**Tietoturva:** ei muutoksia perusarkkitehtuuriin, mutta korjasi konkreettisen aukon —
+osallistujareitit eivät aiemmin tarkistaneet arkistointia lainkaan istunnon voimassaoloaikana,
+joten suljetun tapahtuman osallistuja olisi voinut jatkaa toimintaa evästeensä TTL:n loppuun asti.
+
+**Ei tehty / jätetty auki:**
+
+- Aitoa selainvahvistusta ei tehty samasta syystä kuin Vaihe F:ssä (CLAUDE.md: ei UI-testausta
+  ennen viimeistä vaihetta). Todennettu curlilla koko HTTP-polku emulaattoria vasten: julkaisu,
+  kaksoisjulkaisun idempotenssi (lukuarvot pysyivät samoina, ei tuplautuneet), osallistujan
+  403→200-siirtymä julkaisun yhteydessä, all-time-tilastojen oikeellisuus suoraan Firestoresta
+  luettuna, arkistoinnin kierrätys (`pending`-tasting → `completed`/`statsCommitted:true`) ja
+  istunnon mitätöinti (osallistujan seuraava kutsu palautti 401:n arkistoinnin jälkeen).
+- `npm run seed:demo` on yhä TODO-stub.
+- Playwright-savutesti (Vaihe H) — kattaa aidon selainvuorovaikutuksen viimeisenä vaiheena.
+- Vientilomakkeen "osumatarkkuus"-sarake (SPEC 8) on export-Markdownissa mutta ei
+  `ResultsView`-taulukossa itsessään — näytetään vain "oikein/arvattu"-lukuparina. Pieni,
+  helposti lisättävä puute jos käyttäjä haluaa sen näkyviin UI:hin asti.
+
+**Tarkistettu:** `npm run typecheck` ✓, `npm run lint` ✓, `npm run test` ✓ (189/189),
+`npm run test:emulator` ✓ (4/4), `npm run build` ✓. Koko julkaisu- ja arkistointipolku
+todennettu curlilla emulaattoria vasten: kahden osallistujan Round Robin -tasting alusta
+loppuun, tulokset ennen/jälkeen julkaisun, all-time-tilastojen oikeellisuus Firestoresta
+suoraan luettuna, kaksoisjulkaisun idempotenssi, pending-tastingin kierrätys arkistoinnissa,
+osallistujan istunnon mitätöinti arkistoinnin jälkeen. Tuotantobundlesta vahvistettu ettei
+mikään palvelinpuolen salaisuus esiinny.

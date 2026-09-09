@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, requireAdmin } from "@/lib/apiAuth";
+import { getSession, requireActiveParticipant, requireAdmin } from "@/lib/apiAuth";
 import { handleApiError } from "@/lib/apiResponse";
 import { CreateTastingSchema } from "@/lib/apiSchemas";
-import { getActiveEvent } from "@/lib/events";
+import { getActiveEvent, getEvent } from "@/lib/events";
 import { getParticipant } from "@/lib/participants";
 import { createTasting, listTastings } from "@/lib/tastings";
 import type { TastingDoc } from "@/lib/types";
@@ -43,17 +43,21 @@ export async function GET() {
       return NextResponse.json({ error: "Kirjaudu ensin." }, { status: 401 });
     }
 
-    const event = await getActiveEvent();
-    if (!event) {
-      return NextResponse.json({ tastings: [] });
-    }
-
-    const tastings = await listTastings(event.id);
-
     if (session.role === "admin") {
+      const event = await getActiveEvent();
+      if (!event) return NextResponse.json({ tastings: [] });
+      const tastings = await listTastings(event.id);
       return NextResponse.json({ tastings });
     }
 
+    // Participant: re-validate against their own event (not just "whatever
+    // is active"), so an archived event correctly yields no data — SPEC 4.3
+    // session invalidation, same check as requireActiveParticipant().
+    await requireActiveParticipant();
+    const event = await getEvent(session.eventId);
+    if (!event) return NextResponse.json({ tastings: [] });
+
+    const tastings = await listTastings(event.id);
     const participant = await getParticipant(session.eventId, session.participantId);
     const excludedTastingIds = participant?.excludedTastingIds ?? [];
     return NextResponse.json({

@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { createBeepPlayer, type BeepPlayer } from "@/lib/audioBeep";
 import CountdownTimer from "@/components/CountdownTimer";
 import EvaluationForm, { type GuessOption } from "@/components/EvaluationForm";
+import ResultsView, { type ParticipantResultsData } from "@/components/ResultsView";
 import { subscribeToParticipant } from "@/lib/clientRealtime";
 import type { TastingDoc } from "@/lib/types";
 
@@ -37,14 +38,16 @@ interface MyRoundResponse {
 
 interface TastingCardProps {
   tasting: SanitizedTasting;
+  participantId: string;
   clockOffsetMs: number;
   audioGranted: boolean;
   beepPlayer: BeepPlayer | null;
 }
 
-function TastingCard({ tasting, clockOffsetMs, audioGranted, beepPlayer }: TastingCardProps) {
+function TastingCard({ tasting, participantId, clockOffsetMs, audioGranted, beepPlayer }: TastingCardProps) {
   const [myRound, setMyRound] = useState<MyRoundResponse | null>(null);
   const [ensuring, setEnsuring] = useState(false);
+  const [results, setResults] = useState<ParticipantResultsData | null>(null);
 
   const isTimed = tasting.timeLimitMinutes != null;
   const locked =
@@ -84,6 +87,19 @@ function TastingCard({ tasting, clockOffsetMs, audioGranted, beepPlayer }: Tasti
       .then(setMyRound);
   }
 
+  useEffect(() => {
+    if (tasting.status !== "completed" || tasting.excluded) return;
+    let cancelled = false;
+    fetch(`/api/tastings/${tasting.id}/results`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setResults({ role: "participant", ownParticipantId: participantId, ...data });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tasting.id, tasting.status, tasting.excluded, participantId]);
+
   let body: ReactNode;
 
   if (tasting.excluded) {
@@ -91,7 +107,7 @@ function TastingCard({ tasting, clockOffsetMs, audioGranted, beepPlayer }: Tasti
   } else if (tasting.status === "pending") {
     body = <p className="text-sm text-muted">Odottaa käynnistystä</p>;
   } else if (tasting.status === "completed") {
-    body = <p className="text-sm text-success">Tulokset valmiina</p>;
+    body = results ? <ResultsView data={results} /> : <p className="text-sm text-muted">Ladataan tuloksia...</p>;
   } else if (locked) {
     body = (
       <p className="text-sm text-muted">
@@ -337,6 +353,7 @@ export default function ParticipantSession() {
           <TastingCard
             key={tasting.id}
             tasting={tasting}
+            participantId={session.participantId}
             clockOffsetMs={clockOffsetMs}
             audioGranted={Boolean(beepPlayer)}
             beepPlayer={beepPlayer}

@@ -1,7 +1,7 @@
 import "server-only";
 import { adminDb } from "@/lib/firebaseAdmin";
 import { slugify } from "@/lib/normalize";
-import type { EventDoc } from "@/lib/types";
+import type { EventDoc, TastingDoc } from "@/lib/types";
 
 const EVENTS = "events";
 
@@ -22,6 +22,31 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
   const doc = await adminDb.collection(EVENTS).doc(eventId).get();
   if (!doc.exists) return null;
   return { id: doc.id, ...doc.data() } as EventDoc;
+}
+
+function tastingsRef(eventId: string) {
+  return adminDb.collection(EVENTS).doc(eventId).collection("tastings");
+}
+
+/**
+ * SPEC 14: "Tasting pending, tapahtuma arkistoidaan -> pending-tastingit
+ * merkitään completed, ei tilastoja." statsCommitted is set true directly
+ * (not run through completeTasting()'s stats logic) since nothing was ever
+ * tasted — there is nothing to commit, and this permanently skips it.
+ */
+async function archivePendingTastings(
+  tx: FirebaseFirestore.Transaction,
+  eventId: string
+): Promise<void> {
+  const pendingSnapshot = await tx.get(tastingsRef(eventId).where("status", "==", "pending"));
+  const now = Date.now();
+  for (const doc of pendingSnapshot.docs) {
+    tx.update(doc.ref, {
+      status: "completed",
+      completedAt: now,
+      statsCommitted: true,
+    } satisfies Partial<TastingDoc>);
+  }
 }
 
 export interface CreateEventInput {
@@ -51,6 +76,7 @@ export async function createEvent(input: CreateEventInput): Promise<string> {
       if (activeDoc.id !== input.archivePreviousEventId) {
         throw new ActiveEventExistsError(activeEvent);
       }
+      await archivePendingTastings(tx, activeDoc.id);
       tx.update(activeDoc.ref, { status: "archived", closedAt: Date.now() });
     }
 
@@ -67,9 +93,17 @@ export async function createEvent(input: CreateEventInput): Promise<string> {
   return eventRef.id;
 }
 
+/** SPEC 4.3: "Sulje tapahtuma." Idempotent — archiving twice is a no-op. */
 export async function archiveEvent(eventId: string): Promise<void> {
-  await adminDb.collection(EVENTS).doc(eventId).update({
-    status: "archived",
-    closedAt: Date.now(),
+  const eventRef = adminDb.collection(EVENTS).doc(eventId);
+
+  await adminDb.runTransaction(async (tx) => {
+    const eventDoc = await tx.get(eventRef);
+    if (!eventDoc.exists) throw new Error("EVENT_NOT_FOUND");
+    const event = eventDoc.data() as EventDoc;
+    if (event.status === "archived") return;
+
+    await archivePendingTastings(tx, eventId);
+    tx.update(eventRef, { status: "archived", closedAt: Date.now() });
   });
 }

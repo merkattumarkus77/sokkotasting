@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AdminLoginGate from "@/components/AdminLoginGate";
+import ResultsView, { type AdminResultsData } from "@/components/ResultsView";
 import { subscribeToActiveEvent, subscribeToEventParticipants } from "@/lib/clientRealtime";
 import type { EventDoc, ParticipantDoc, TastingDoc } from "@/lib/types";
 
@@ -23,6 +24,13 @@ const STATUS_LABELS: Record<EntryStatus, string> = {
   done: "Valmis",
 };
 
+async function fetchTastings(): Promise<TastingDoc[]> {
+  const res = await fetch("/api/tastings");
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.tastings as TastingDoc[];
+}
+
 function OrganizerDashboardInner() {
   const [activeEvent, setActiveEvent] = useState<EventDoc | null>(null);
   const [participants, setParticipants] = useState<ParticipantDoc[]>([]);
@@ -31,6 +39,16 @@ function OrganizerDashboardInner() {
   const [entries, setEntries] = useState<DashboardEntry[]>([]);
   const [actionError, setActionError] = useState("");
   const [busyParticipantId, setBusyParticipantId] = useState<string | null>(null);
+
+  const [results, setResults] = useState<AdminResultsData | null>(null);
+  const [confirmPublish, setConfirmPublish] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState("");
+
+  const selectedTasting = tastings.find((t) => t.id === selectedTastingId) ?? null;
 
   useEffect(() => subscribeToActiveEvent(setActiveEvent), []);
 
@@ -49,13 +67,11 @@ function OrganizerDashboardInner() {
       return;
     }
     let cancelled = false;
-    fetch("/api/tastings")
-      .then((res) => res.json())
-      .then((data) => {
-        if (cancelled) return;
-        setTastings(data.tastings);
-        setSelectedTastingId((current) => current ?? data.tastings[0]?.id ?? null);
-      });
+    fetchTastings().then((list) => {
+      if (cancelled) return;
+      setTastings(list);
+      setSelectedTastingId((current) => current ?? list[0]?.id ?? null);
+    });
     return () => {
       cancelled = true;
     };
@@ -123,6 +139,68 @@ function OrganizerDashboardInner() {
     });
   }
 
+  async function fetchResults() {
+    if (!selectedTastingId) return;
+    const res = await fetch(`/api/tastings/${selectedTastingId}/results`);
+    if (!res.ok) {
+      setResults(null);
+      return;
+    }
+    const data = await res.json();
+    setResults({ role: "admin", ...data });
+  }
+
+  useEffect(() => {
+    setResults(null);
+    setConfirmPublish(false);
+    fetchResults();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTastingId]);
+
+  async function handlePublish() {
+    if (!selectedTastingId) return;
+    setPublishing(true);
+    setActionError("");
+    try {
+      const res = await fetch(`/api/tastings/${selectedTastingId}/complete`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setActionError(data.error ?? "Julkaisu epäonnistui.");
+        return;
+      }
+      setConfirmPublish(false);
+      setTastings(await fetchTastings());
+      await fetchResults();
+    } catch {
+      setActionError("Yhteys palvelimeen epäonnistui.");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function handleArchive() {
+    if (!activeEvent) return;
+    setArchiving(true);
+    setArchiveError("");
+    try {
+      const res = await fetch(`/api/events/${activeEvent.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "archived" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setArchiveError(data.error ?? "Sulkeminen epäonnistui.");
+        return;
+      }
+      setConfirmArchive(false);
+    } catch {
+      setArchiveError("Yhteys palvelimeen epäonnistui.");
+    } finally {
+      setArchiving(false);
+    }
+  }
+
   if (!activeEvent) {
     return <p className="text-sm text-muted">Aktiivista tapahtumaa ei löytynyt.</p>;
   }
@@ -134,6 +212,42 @@ function OrganizerDashboardInner() {
         <p className="text-sm text-muted">
           {activeEvent.category} · {participants.length} osallistujaa
         </p>
+        <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
+          {confirmArchive ? (
+            <>
+              <p className="text-sm text-danger">
+                Osallistujat eivät voi enää kirjautua eivätkä viedä tuloksiaan. Varmista, että
+                kaikki ovat tallentaneet omat tuloksensa.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleArchive}
+                  disabled={archiving}
+                  className="rounded-lg bg-danger px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {archiving ? "Suljetaan..." : "Vahvista sulkeminen"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmArchive(false)}
+                  className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-raised"
+                >
+                  Peruuta
+                </button>
+              </div>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmArchive(true)}
+              className="self-start rounded-lg border border-danger/50 px-3 py-1.5 text-sm text-danger hover:bg-danger/10"
+            >
+              Sulje tapahtuma
+            </button>
+          )}
+          {archiveError && <p className="text-sm text-danger">{archiveError}</p>}
+        </div>
       </div>
 
       {tastings.length === 0 && (
@@ -216,6 +330,56 @@ function OrganizerDashboardInner() {
         })}
       </div>
       {actionError && <p className="text-sm text-danger">{actionError}</p>}
+
+      {selectedTasting && selectedTasting.status !== "pending" && (
+        <div className="rounded-lg border border-border bg-surface p-4">
+          {selectedTasting.status === "in_progress" && (
+            <div className="mb-4 flex flex-col gap-2 border-b border-border pb-4">
+              {confirmPublish ? (
+                <>
+                  <p className="text-sm text-danger">
+                    Tulokset paljastuvat osallistujille eikä tastingia voi enää muokata.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePublish}
+                      disabled={publishing}
+                      className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground disabled:opacity-50"
+                    >
+                      {publishing ? "Julkaistaan..." : "Vahvista julkaisu"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmPublish(false)}
+                      className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-raised"
+                    >
+                      Peruuta
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmPublish(true)}
+                  className="self-start rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground"
+                >
+                  Päätä tasting ja julkaise
+                </button>
+              )}
+            </div>
+          )}
+
+          <p className="mb-2 text-sm font-medium">
+            Tulokset{selectedTasting.status === "in_progress" ? " (ennakko)" : ""}
+          </p>
+          {results ? (
+            <ResultsView data={results} />
+          ) : (
+            <p className="text-sm text-muted">Ladataan tuloksia...</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

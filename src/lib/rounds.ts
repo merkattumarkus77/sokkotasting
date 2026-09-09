@@ -33,6 +33,16 @@ function roundDocId(participantId: string, roundIndex: number): string {
   return `${participantId}_${roundIndex}`;
 }
 
+/**
+ * All submitted rounds for a tasting (across every participant) — the basis
+ * for group-level scoring (SPEC 7), the guessing ranking (SPEC 8), and the
+ * all-time stats commit (SPEC 13). Returned as a Query so callers can either
+ * `.get()` it directly or `tx.get(query)` inside a transaction.
+ */
+export function submittedRoundsQuery(eventId: string, tastingId: string) {
+  return roundsRef(eventId, tastingId).where("status", "==", "SUBMITTED");
+}
+
 export class RoundMismatchError extends Error {
   constructor() {
     super("ROUND_MISMATCH");

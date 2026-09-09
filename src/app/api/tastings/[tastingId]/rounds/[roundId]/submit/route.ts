@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireParticipant } from "@/lib/apiAuth";
+import { requireActiveParticipant } from "@/lib/apiAuth";
 import { handleApiError } from "@/lib/apiResponse";
 import { SubmitRoundSchema } from "@/lib/apiSchemas";
 import { getParticipant } from "@/lib/participants";
@@ -11,7 +11,7 @@ export async function POST(
   { params }: { params: Promise<{ tastingId: string; roundId: string }> }
 ) {
   try {
-    const session = await requireParticipant();
+    const session = await requireActiveParticipant();
     const { tastingId, roundId } = await params;
     const body = SubmitRoundSchema.parse(await request.json());
 
