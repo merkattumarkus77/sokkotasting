@@ -461,3 +461,81 @@ loppuun, tulokset ennen/jälkeen julkaisun, all-time-tilastojen oikeellisuus Fir
 suoraan luettuna, kaksoisjulkaisun idempotenssi, pending-tastingin kierrätys arkistoinnissa,
 osallistujan istunnon mitätöinti arkistoinnin jälkeen. Tuotantobundlesta vahvistettu ettei
 mikään palvelinpuolen salaisuus esiinny.
+
+## Vaihe H — Viimeistely ja luovutus ✅
+
+**Laajennettu käyttäjän pyynnöstä 2026-09-09** (ks. `docs/PLAN.md`): aiempi "ei UI-testausta ennen
+viimeistä vaihetta" -rajoitus poistui eksplisiittisesti tässä vaiheessa. Playwright asennettiin ja
+ajettiin oikeasti oikeaa Chromium-selainta vasten, ja lisäksi rakennettiin laajempi
+skenaariopohjainen simulaatiotestaus useammalle rinnakkaiselle tastingille (RR + Swiss sekaisin).
+Koko testauskerroksen tulokset ja löydökset on koottu erikseen: [`docs/TESTIRAPORTTI.md`](TESTIRAPORTTI.md).
+
+**Tehty — testaus:**
+
+- `scripts/simulate-scenario.ts` (uusi): yksi tapahtuma, viisi rinnakkaista tastingia (RR ja Swiss
+  sekaisin, poissulkeminen, tarkoituksella kesken jätetty Swiss, tarkoituksella käynnistämätön
+  RR), 25 tarkistusta — kaikki läpi. Kattaa `MAX_TASTINGS_PER_EVENT`-rajan, bulk-tarjoilun useassa
+  tastingissa, all-time-kategorian yhdistymisen kolmesta julkaistusta tastingista yhteen
+  dokumenttiin, tapahtumanlaajuisen arvausrankingin ja arkistoinnin sekamuotoisella
+  tasting-joukolla. Löysi ja korjasi oman kehitysvaiheen bugin (kuvitteellinen tasting-tason
+  `category`-kenttä, jota tietomallissa ei ole — kategoria kuuluu vain tapahtumalle, SPEC 3).
+  `npm run simulate:scenario`-skripti lisätty `package.json`iin.
+- Playwright (`@playwright/test`) asennettu, Chromium ladattu (`npx playwright install chromium
+  --with-deps`), ja ajettu oikeasti, ei vain kirjoitettu.
+  - `e2e/smoke.spec.ts`: SPEC 15.4:n savutesti sanasta sanaan.
+  - `e2e/multi-tasting.spec.ts`: käyttäjän eksplisiittinen lisäpyyntö — yksi RR- ja yksi
+    Swiss-tasting rinnakkain, molemmat kortit näkyvät osallistujan näytöllä yhtä aikaa, toisen
+    julkaisu ei häiritse toista.
+  - `playwright.config.ts`: rakentaa erillisen tuotantokäännöksen (`npx next build && npx next
+    start`, `E2E_DIST_DIR=.next-e2e`) `next dev`in sijaan — dev-palvelimen on-demand-käännin
+    kaatui satunnaisesti kolmen samanaikaisen selainkontekstin kuormassa
+    (`InvariantError: Expected clientReferenceManifest to be defined`), ei sovellusbugi vaan
+    dev-palvelimen tunnettu rajoitus. `next.config.ts`:ään lisätty ehdollinen `distDir`
+    (`E2E_DIST_DIR`-muuttujan takana) jotta tämä ei koskaan kosketa normaalia `npm run
+    build`-artefaktia.
+  - `e2e/global-setup.ts`: seeraa `config/appConfig`-dokumentin emulaattoriin (sama kuin
+    `scripts/set-password.mjs` mutta ohjelmallisesti, kertaalleen ennen kaikkia testejä).
+  - `npm run e2e` päivitetty TODO-stubista oikeaksi komennoksi
+    (`firebase emulators:exec ... "playwright test"`, sama kääre-kuvio kuin `test:emulator`illa).
+- **Löydös (ei bugi):** 8 tuotteen Swiss-tasting tarvitsee ~29–30 peräkkäistä kierrosta per
+  osallistuja, ei `N−1=7` kuten pudotuspelien osuudesta yksin voisi olettaa — jokainen
+  alkusarjan "kierros" (enintään 6, `seedingRounds+4`) on itse asiassa korillinen `floor(N/2)`
+  rinnakkaista paria jotka yksi osallistuja kokee peräkkäisinä. Vahvistettu toistuvana sekä
+  `npm run simulate`illa kirjastotasolla että selaimessa — ei ikuinen silmukka, päättyy aina
+  äärellisessä ajassa (SPEC 15.1:n "identtiset arviot" -testi kattaa juuri tämän). Selittää miksi
+  `e2e/multi-tasting.spec.ts` tarvitsi ison kierrosbudjetin. Kirjattu tarkemmin
+  `docs/TESTIRAPORTTI.md`:hen jatkokehityksen UX-huomiona (ei koodimuutosta, SPEC:iä ei muutettu).
+- Testiskriptin (ei tuotteen) neljä bugia löytyi ja korjattiin Playwright-testejä kehitettäessä:
+  tapahtuman ylikirjoitusvahvistuksen puuttuminen apurifunktiosta, hallintapaneelin
+  tasting-valitsimen latautumiskilpajuoksu, `ResultsView`in kaksoisosuma otsikko- ja
+  vientivalintaruututekstille, sekä pollauksesta johtuva DOM-irtoamiskilpajuoksu
+  painikeklikkauksissa. Kaikki kirjattu `docs/TESTIRAPORTTI.md`:n § 6:een.
+
+**Tehty — dokumentaatio:**
+
+- [`docs/TESTIRAPORTTI.md`](TESTIRAPORTTI.md): kattava testausraportti — mitä testattu ja miten
+  jokaisella kerroksella, löydökset, mitä ei voi testata tässä ympäristössä (visuaalinen arvio,
+  oikea mobiili, iOS Safari/Web Audio, äänen kuuluvuus, kuormitustestaus, kieliasun hienosäätö),
+  ja neljä valmista promptia toiselle kielimallille (Claude/Gemini) niiden ulkoistamiseksi.
+- [`docs/TESTIKASIKIRJA.md`](TESTIKASIKIRJA.md): 12-osainen manuaalinen hyväksymistestauskäsikirja.
+- [`docs/CUTOVER.md`](CUTOVER.md): tuotantoon siirron ohjeet — vanhojen kokoelmien
+  (`events`/`participants`/`scores`, vanha muoto) tyhjennys, `seed:config`-ajo tuotantoon,
+  `firestore.rules`-deploy, `v2 → main`-yhdistäminen. **Kirjoitettu, ei suoritettu.**
+- `README.md` päivitetty create-next-app-oletuspohjasta projektin omaksi (komennot, testauskerrokset,
+  linkit muihin dokumentteihin, muistutus ettei julkaisu ole automaattista).
+
+**Ei tehty / jätetty auki:**
+
+- `npm run seed:demo` on yhä TODO-stub (ei osa Vaihe H:n suunniteltua laajuutta).
+- `docs/CUTOVER.md`:n listaamat kohdat (vanhan datan poisto, salasanojen asetus, sääntöjen deploy,
+  `main`-yhdistäminen) — tarkoituksella suorittamatta, käyttäjän oma päätös.
+- `.env.local`/Vercelin `firebaseAdmin.ts`-tunnistautumistapa tuotannossa (palvelutiliavaimen
+  polku vs. Vercel-ympäristö) — kirjattu avoimena kysymyksenä `docs/CUTOVER.md`:n Vaihe 4:ään,
+  päätettävä ennen oikeaa `main`-yhdistämistä.
+- `docs/TESTIRAPORTTI.md`:n § 8 listaamat asiat (aito visuaalinen/käytettävyysarvio, oikea
+  mobiililaite, iOS Safari, äänen kuuluvuus, kuormitustestaus, kieliasun natiivipuhujan-arvio).
+
+**Tarkistettu:** `npm run typecheck` ✓, `npm run lint` ✓, `npm run test` ✓ (189/189),
+`npm run test:emulator` ✓ (4/4), `npm run simulate:scenario` ✓ (25/25), `npm run e2e` ✓ (2/2,
+oikea Chromium-selain), `npm run build` ✓, selainbundlesta vahvistettu ettei palvelinpuolen
+salaisuuksia esiinny.

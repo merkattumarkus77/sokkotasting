@@ -217,13 +217,26 @@ tai vääränä sijoituksena ajonaikaisesti.
 
 ## Vaihe H — Viimeistely ja luovutus
 
+**Laajennettu käyttäjän pyynnöstä 2026-09-09:** aiempi "ei UI-testausta ennen viimeistä vaihetta"
+-rajoitus poistuu nyt tässä vaiheessa eksplisiittisesti — Playwright asennetaan ja ajetaan oikeasti,
+ei vain kirjoiteta. Lisäksi laajempi skenaariopohjainen simulaatiotestaus: useampi rinnakkainen
+tasting samassa tapahtumassa, sekoitus Round Robinia ja Sveitsiläistä turnauskaaviota, poissulkemisia,
+samanaikaista etenemistä. Vaiheen päätteeksi kirjoitetaan `docs/TESTIRAPORTTI.md` joka kuvaa mitä
+testattiin ja miten, sekä suositukset siitä mitä kannattaa ulkoistaa toiselle kielimallille.
+
 1. Playwright-savutesti (15.4) emulaattoria vasten, korvaa TILANNE.md:ssä kuvatut kertaluontoiset
-   tuotanto-ajot pysyvällä, repoon commitoidulla testillä.
-2. `docs/TESTIKASIKIRJA.md`: manuaalinen hyväksymistestaus.
-3. `docs/CUTOVER.md`: tuotannon vanhojen kokoelmien (`events`, `participants`, `scores` — vanhassa
+   tuotanto-ajot pysyvällä, repoon commitoidulla testillä. Ajetaan oikeasti, ei vain kirjoiteta.
+2. Laajennettu skenaariosimulaatio emulaattoria vasten: useampi rinnakkainen tasting (RR + Swiss
+   sekaisin), poissulkemisia, samanaikainen eteneminen useassa tastingissa, "kuittaa kaikki
+   odottavat" -toiminto useassa tastingissa, all-time-tilastojen kertyminen useasta tastingista
+   samaan kategoriaan, arkistointi kesken olevien/valmiiden/aloittamattomien tastingien sekamuodossa.
+3. `docs/TESTIKASIKIRJA.md`: manuaalinen hyväksymistestaus.
+4. `docs/CUTOVER.md`: tuotannon vanhojen kokoelmien (`events`, `participants`, `scores` — vanhassa
    muodossa) tyhjennys, `seed:config`-ajo (adminUsername + molemmat bcrypt-tiivisteet), sääntöjen
    deploy, `v2 → main`. Kirjoitetaan mutta ei suoriteta.
-4. `README.md` päivitys.
+5. `README.md` päivitys.
+6. `docs/TESTIRAPORTTI.md`: mitä testattu ja miten, tunnetut aukot, promptiehdotukset aukkojen
+   ulkoistamiseksi toiselle kielimallille (esim. Claude/Gemini).
 
 ---
 

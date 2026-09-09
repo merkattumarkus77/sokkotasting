@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sokkotasting
 
-## Getting Started
+Sokkotasting-sovellus: järjestäjä luo tapahtuman ja rinnakkaisia maisteluja (Round Robin tai
+Sveitsiläinen turnauskaavio), osallistujat arvioivat tuoteparit sokkona liukusäätimellä, sovellus
+laskee normalisoidut tulokset ja tilastot. Sitova määrittely: [`docs/SPEC.md`](docs/SPEC.md).
+Pysyvät kehitysohjeet: [`CLAUDE.md`](CLAUDE.md).
 
-First, run the development server:
+**Stack:** Next.js (App Router) · TypeScript strict · Tailwind CSS v4 · Firestore (Spark-taso) ·
+Vitest · Playwright.
+
+## Kehitys
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+firebase emulators:start --only firestore   # yksi terminaali, jätä auki
+npm run seed:config -- <admin-tunnus> <admin-salasana> <tapahtumasalasana>   # kertaalleen
+npm run dev                                  # toinen terminaali, http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Aseta `.env.local` (kopioi `.env.local.example`) ja `NEXT_PUBLIC_USE_FIRESTORE_EMULATOR=true`
+paikallista kehitystä varten — sovellus ei koskaan saa kirjoittaa tuotanto-Firestoreen
+kehityksen tai testien aikana.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Komennot
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev             # kehityspalvelin
+npm run build            # tuotantokäännös
+npm run typecheck        # tsc --noEmit
+npm run lint              # ESLint
+npm run test               # Vitest, yksikkötestit
+npm run test:emulator      # Vitest integraatiotestit Firestore-emulaattoria vasten
+npm run simulate            # täysi tasting-simulaatio ilman käyttöliittymää (ks. SPEC 15.3)
+npm run simulate:scenario   # laajennettu monitasting-skenaario (useampi rinnakkainen tasting, RR+Swiss)
+npm run e2e                  # Playwright-selaintestit emulaattoria + tuotantokäännöstä vasten
+npm run seed:config          # asettaa admin-tunnuksen ja tapahtumasalasanan
+```
 
-## Learn More
+## Testaus
 
-To learn more about Next.js, take a look at the following resources:
+Testauskerrokset ja mitä kukin kattaa: ks. [`docs/TESTIRAPORTTI.md`](docs/TESTIRAPORTTI.md).
+Manuaalinen hyväksymistestaus: [`docs/TESTIKASIKIRJA.md`](docs/TESTIKASIKIRJA.md).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Muut dokumentit
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- [`docs/SPEC.md`](docs/SPEC.md) — sitova määrittely.
+- [`docs/PLAN.md`](docs/PLAN.md) — vaiheistettu migraatiosuunnitelma.
+- [`docs/PROGRESS.md`](docs/PROGRESS.md) — mitä on tehty missäkin vaiheessa.
+- [`docs/GAP.md`](docs/GAP.md) — SPEC vs. aiempi toteutus -analyysi (historiallinen).
+- [`docs/CUTOVER.md`](docs/CUTOVER.md) — tuotantoon siirron ohjeet (ei suoritettu).
 
-## Deploy on Vercel
+## Julkaisu
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Tuotantoon siirto ei ole automaattista eikä tämän repon minkään skriptin ajama — ks.
+[`docs/CUTOVER.md`](docs/CUTOVER.md) ja `CLAUDE.md`:n "Älä koskaan `git push`, `firebase deploy`
+tai `vercel deploy`" -sääntö. Julkaisu on aina käyttäjän oma, erillinen päätös.

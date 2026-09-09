@@ -11,10 +11,11 @@
     "test": "vitest run",
     "test:emulator": "firebase emulators:exec --only firestore --project sokkotasting-emulator \"vitest run --config vitest.emulator.config.mts\"",
     "simulate": "tsx --tsconfig tsconfig.scripts.json scripts/simulate.ts",
+    "simulate:scenario": "tsx --tsconfig tsconfig.scripts.json scripts/simulate-scenario.ts",
     "seed:config": "node scripts/set-password.mjs",
     "set-password": "node scripts/set-password.mjs",
     "seed:demo": "echo \"TODO (Vaihe D): demodata emulaattoriin\" && exit 1",
-    "e2e": "echo \"TODO (Vaihe H): Playwright emulaattoria vastaan\" && exit 1"
+    "e2e": "firebase emulators:exec --only firestore --project sokkotasting-emulator \"playwright test\""
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -27,6 +28,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^24",
