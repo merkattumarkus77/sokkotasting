@@ -12,7 +12,7 @@ interface DashboardEntry {
   name: string;
   status: EntryStatus;
   completedRounds: number;
-  totalRounds: number;
+  totalRounds: number | null;
   nextRound?: { roundId: string; itemAName: string; itemBName: string };
 }
 
@@ -179,12 +179,15 @@ function OrganizerDashboardInner() {
 
               {entry.nextRound ? (
                 <p className="mt-1 text-sm text-muted">
-                  Kierros {entry.completedRounds + 1}/{entry.totalRounds} — Tarjoile A ={" "}
+                  Kierros {entry.completedRounds + 1}
+                  {entry.totalRounds != null ? `/${entry.totalRounds}` : ""} — Tarjoile A ={" "}
                   {entry.nextRound.itemAName}, B = {entry.nextRound.itemBName}
                 </p>
               ) : (
                 <p className="mt-1 text-sm text-muted">
-                  {entry.completedRounds}/{entry.totalRounds} kierrosta
+                  {entry.totalRounds != null
+                    ? `${entry.completedRounds}/${entry.totalRounds} kierrosta`
+                    : `${entry.completedRounds} kierrosta`}
                 </p>
               )}
 

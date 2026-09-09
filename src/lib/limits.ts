@@ -10,6 +10,8 @@ export const SEEDING_ROUNDS_MAX = 4;
 export const SEEDING_ROUNDS_DEFAULT = 2;
 export const ROUND_ROBIN_MIN_ITEMS = 3;
 export const ROUND_ROBIN_MAX_ITEMS = 12;
+export const SWISS_MIN_ITEMS = 8;
+export const SWISS_MAX_ITEMS = 64;
 
 // Fixed project id used whenever talking to the local Firestore emulator
 // (client, admin SDK, and scripts/set-password.mjs). Deliberately ignores

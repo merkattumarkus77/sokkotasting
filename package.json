@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:emulator": "firebase emulators:exec --only firestore --project sokkotasting-emulator \"vitest run --config vitest.emulator.config.mts\"",
-    "simulate": "echo \"TODO (Vaihe E): tasting-simulaatio ilman UI:ta\" && exit 1",
+    "simulate": "tsx --tsconfig tsconfig.scripts.json scripts/simulate.ts",
     "seed:config": "node scripts/set-password.mjs",
     "set-password": "node scripts/set-password.mjs",
     "seed:demo": "echo \"TODO (Vaihe D): demodata emulaattoriin\" && exit 1",
@@ -37,6 +37,7 @@
     "firebase-admin": "^14.3.0",
     "firebase-tools": "^15.29.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5",
     "vitest": "^5.0.0"
   }

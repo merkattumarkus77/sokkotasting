@@ -7,7 +7,7 @@ import {
   RoundAlreadySubmittedError,
   RoundMismatchError,
   RoundNotServedError,
-  SwissNotImplementedError,
+  SwissTieForbiddenError,
 } from "@/lib/rounds";
 import { MaxTastingsReachedError } from "@/lib/tastings";
 
@@ -53,10 +53,10 @@ export function handleApiError(error: unknown): NextResponse {
       { status: 409 }
     );
   }
-  if (error instanceof SwissNotImplementedError) {
+  if (error instanceof SwissTieForbiddenError) {
     return NextResponse.json(
-      { error: "Sveitsiläinen turnauskaavio ei ole vielä käytössä." },
-      { status: 501 }
+      { error: "Tasapeli ei ole sallittu sveitsiläisessä turnauksessa." },
+      { status: 400 }
     );
   }
   if (error instanceof Error && NOT_FOUND_MESSAGES.has(error.message)) {

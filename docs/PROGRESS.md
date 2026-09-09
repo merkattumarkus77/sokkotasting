@@ -187,3 +187,120 @@ istuntoja varten.
 (44/44, integraatiotestit pois suljettu), `npm run test:emulator` ✓ (4/4), `npm run build` ✓.
 Tuotantobundlesta vahvistettu grepillä ettei `SESSION_SECRET`, `serviceAccountKey`,
 `firebase-admin`, `adminPasswordHash` tai `eventPasswordHash` esiinny.
+
+## Vaihe E — Sveitsiläinen turnauskaavio ✅
+
+**Tehty — algoritmi (testit ensin, kuten CLAUDE.md ja SPEC 15.1 vaativat):**
+
+- `lib/swiss.ts` (puhdas funktio, ei Firebase-riippuvuutta): SPEC 6.2 Vaihe A kokonaisuudessaan.
+  `pairFirstSeedingRound` (kierros 1: sekoita, vierekkäiset parit, pariton → vapaa),
+  `pairSecondSeedingRound` (kaksi koria cumulativePointsin mukaan, taittoparitus koreittain,
+  vapaan saanut voittajakoriin), `pairSubsequentSeedingRound` (kierrokset 3+: ryhmittely
+  identtisen pistesaldon mukaan, taittoparitus ryhmän sisällä), yhteinen `pairGroups`-moottori
+  jota molemmat käyttävät (leftover kannetaan seuraavaan, lähimpään pistesaldoryhmään, kuten
+  SPEC edellyttää). `foldMatchAvoidingMet`: ahne pariutus joka ei koskaan toista `metPairs`-parin,
+  jättää loput ratkaisematta jos sidosryhmä on käyty läpi (rule 4) — ei kaadu, ei jää jumiin.
+  `resolveSeedOrder`: katkaisusäännön tie-break-ketju (keskinäinen kohtaaminen → tastedPoints →
+  `rngSeed`-deterministinen arvonta), aina täysi permutaatio. `computeNextSeedingStep`: dispatcher
+  joka valitsee kierroksen 1/2/3+ ja signaloi `needsCutoff`:in kun `maxSeedingRounds` ylittyy —
+  **kriittinen testi**: identtisillä arvioilla simuloitu koko alkusarja N=8/9/16:lla päättyy
+  aina äärellisessä ajassa (SPEC 15.1:n "tämä testi paljastaa ikuisen silmukan" -vaatimus).
+- `lib/swissBracket.ts`: SPEC 6.2 Vaiheet B ja C. `seedPositions` (rekursiivinen
+  tennissiemennys, todennettu SPEC:n omaa esimerkkiä vasten `[1,4,2,3]` ja `[1,8,4,5,2,7,3,6]`),
+  `buildBracket` (kaaviokoko `2^ceil(log2(N))`, `B-N` vapaataipaletta parhaille sijoituksille,
+  vain kierros 1 voi olla `isBye` — myöhemmät kierrokset odottavat aina oikeaa tulosta vaikka
+  molemmat paikat täyttyisivät jo vapaista), `advanceBracket` (puhdas, palauttaa uuden kaavion;
+  pronssiottelun paikat täyttyvät automaattisesti välierien häviäjistä), `computeFinalRanking`
+  (sijat 1-2 finaalista, 3-4 pronssista tai välierähäviäjien cumulativePointsista, loput
+  pudonneen kierroksen mukaan ryhmiteltynä). **Kriittinen testi**: sijoitukset 1 ja 2 eivät
+  kohtaa ennen finaalia, todennettu simuloimalla koko kaavio kaikilla `N = 8…64`.
+  141 Vitest-testiä yhteensä (`swiss.test.ts` + `swissBracket.test.ts`), kaikki vihreitä.
+
+**Tehty — orkestrointi (`lib/rounds.ts`):**
+
+- `ensureRounds` SWISS_TOURNAMENTille: luo vain alkusarjan kierroksen 1 (SPEC 5.1), soveltaa
+  vapaan 25 pisteen hyvityksen heti jos N on pariton.
+- `submitRound` ajaa koko tilakoneen yhdessä transaktiossa jokaisen lähetyksen yhteydessä
+  (SPEC 5.1: "jokainen submit laukaisee seuraavan parituksen laskennan"): alkusarjan
+  eteneminen → katkaisu ja `seedOrder`/kaavion rakennus → pudotuspelien eteneminen →
+  `computeFinalRanking` ja `phase: 'DONE'` kun sekä finaali (ja pronssi, jos käytössä) on
+  ratkaistu. Tasapeli (`scoreA === 25`) hylätään SWISS-tastingeissa palvelimella
+  (`SwissTieForbiddenError`, HTTP 400) — SPEC 6.2:n "liukusäädin ei pysähdy 25:een" -vaatimus
+  toteutuu palvelinpuolella (asiakas nudge’aa liukusäätimen pois 25:stä, mutta palvelin on
+  se joka oikeasti estää sen, kuten SPEC vaatii).
+- **Kaksi vakavaa bugia löytyi ja korjattiin simulointitestauksessa** (ks. alla) — molemmat
+  olisivat aiheuttaneet jumiutumisen tuotannossa ilman `npm run simulate`-vaihetta:
+  1. Kaavion eteneminen (`advanceBracket`) oli virheellisesti ehdollistettu sille, että
+     seuraavaa kierrosta ei ollut vielä valmiiksi luotu — tämä tarkoitti, että jos
+     osallistujalla oli jo useampi valmiiksi luotu ottelu jonossa (esim. kaikki neljä QF-ottelua
+     kerralla), vain VIIMEISEN ottelun tulos päivittyi kaavioon; aiemmat päätökset katosivat.
+     Korjaus: kaavion päivitys on nyt aina ehdoton jokaiselle pudotuspeli-lähetykselle; vain
+     "luodaanko uusia otteluita" -päätös on ehdollinen.
+  2. `matchId`-pohjainen "onko tämä ottelu jo luotu" -tarkistus ei suodattanut
+     `participantId`:llä — koska jokaisella osallistujalla on SPEC 6.2:n mukaan oma
+     itsenäinen kaavionsa mutta samat `matchId`-arvot (esim. "QF-1") toistuvat jokaisen
+     osallistujan kaaviossa, kysely löysi TOISEN osallistujan jo luodun QF-1-ottelun ja
+     jätti tämän osallistujan oman QF-1:n luomatta kokonaan. Korjaus: kysely suodattaa nyt
+     sekä `participantId`:llä että `matchId`:llä.
+  Molemmat löytyivät `npm run simulate`-ajoista (ensimmäinen N=8:lla, jossa yksi osallistuja
+  jumiutui; toinen N=15:llä 8 osallistujalla, jossa kaikki paitsi ensimmäinen jumiutuivat) —
+  ei kertaakaan pelkillä Vitest-yksikkötesteillä, koska ne testaavat `lib/swiss.ts`/
+  `lib/swissBracket.ts`:n puhdasta logiikkaa erikseen, ei `lib/rounds.ts`:n Firestore-
+  orkestrointia usealla osallistujalla. Tämä vahvistaa SPEC 15.3:n perustelun simulaatiolle.
+- `my-round`- ja `dashboard`-reitit korjattu: `totalRounds` on `null` SWISS-tastingeille
+  (SPEC 6.2: kierrosmäärä ei ole tiedossa etukäteen), "valmis"-tarkistus lukee
+  `participantState.phase === 'DONE'` eikä RR:n `currentRoundIndex >= totalRounds`-kaavaa.
+  `finalRanking`-kenttää EI palauteta `my-round`-vastauksessa vaikka osallistujan oma kaavio
+  olisi valmis — SPEC 11.3 sanoo tulokset paljastetaan vasta kun koko tastingin `status` on
+  `'completed'` (Vaihe G), ei heti kun yksittäisen osallistujan kaavio ratkeaa.
+
+**Tehty — käyttöliittymä ja apuscriptit:**
+
+- `OrganizerCreateEvent.tsx`: logiikkavalinta (Round Robin / Sveitsiläinen turnaus),
+  tuotemäärän rajat vaihtuvat valinnan mukaan (8–64 Swissille), `seedingRounds`-kenttä (2–4,
+  SPEC-päätös), pronssiottelu-valinta, N=64-varoitus punaisella (SPEC 6.2:n
+  kokorajoitusvaroitus). Yhteenveto näyttää Swissille tarkan pudotuspeliottelumäärän
+  (`N-1`, `+1` pronssilla) ja kaaviokoon, mutta EI keksi tarkkaa lukua alkusarjalle —
+  se vaihtelee arvioiden mukaan eikä sille ole luotettavaa etukäteisarviota.
+- `EvaluationForm.tsx`: liukusäädin ei koskaan lepää 25:ssä Swiss-tastingissa (nudge 26:een),
+  otsikko näyttää joko `Kierros X/Y` (RR) tai `Kierros X (alkusarja/pudotuspelit)` (Swiss).
+- `scripts/simulate.ts` (SPEC 15.3): ajaa täyden tastingin emulaattoria vasten satunnaisilla
+  arvioilla, tulostaa per-osallistuja-yhteenvedon, palauttaa poikkeavan exit-koodin jos jokin
+  jumiutuu (300 kierroksen turvakatto). Vaatii `FIRESTORE_EMULATOR_HOST`:in — kieltäytyy
+  ajamasta ilman sitä, ei koskaan tuotanto-Firestorea vasten. Ajetaan `npm run simulate --
+  --logic=... --items=N --participants=M`:llä. **Ajettu onnistuneesti jokaisella N = 8…20**
+  (SPEC 15.3:n nimenomainen vaatimus ennen kuin turnauslogiikka saa ilmoittaa itsensä
+  valmiiksi), lisäksi SPEC:n oma esimerkki `--items=15 --participants=8`.
+  - Tekninen sivuhuomio: `tsconfig.scripts.json` (uusi) aliasoi `server-only`-paketin
+    no-op-tynkään `tsx`:lle samasta syystä kuin Vitestille (ks. Vaihe A/B+C+D) — paketti
+    kaatuu aina Next.js-buildin ulkopuolella. Ei vaikuta itse `next build`-turvaverkkoon.
+
+**Tietoturva:** `firestore.rules` (Vaihe B+C+D:stä) esti jo koko `tastings/**`-polun
+selainluvun — tämä suojasi automaattisesti myös uudet `bracket`/`seedOrder`/`finalRanking`-
+kentät `participantState`-dokumentissa ilman lisätoimia, koska koko dokumentti oli jo
+piilossa.
+
+**Ei tehty / jätetty auki (seuraaville vaiheille):**
+
+- Esilaskuri (SPEC 10) on toteutettu vain osana tastingin luontilomaketta (tarkka
+  pudotuspeliottelumäärä + kaaviokoko), ei itsenäisenä näkymänä joka olisi käytettävissä
+  ennen tapahtuman luontia. Alkusarjan min/tyypillinen/max-esiintymäarviot (SPEC 10:n taulukko)
+  eivät ole toteutettu — niiden luotettava laskenta vaatisi joko simulaatiopohjaisen arvion tai
+  huolellisen kombinatorisen analyysin, eikä kumpaakaan ollut perusteltua rakentaa tässä
+  vaiheessa ydinalgoritmin rinnalla. Merkitty avoimeksi, ei TODO-koodikommenttina koodissa
+  (koska mitään keskeneräistä toteutusta ei ole, vain puuttuva ominaisuus).
+- Ajastin (Vaihe F): `timeLimitMinutes` ei vieläkään näy luontilomakkeella.
+- Tulokset, arvauskisan ranking/loppuviestit, Markdown-vienti, all-time-tilastot, tapahtuman
+  arkistointi (Vaihe G) — sisältäen sen, missä `finalRanking` oikeasti paljastetaan
+  osallistujalle.
+- `npm run seed:demo` on yhä TODO-stub.
+- Playwright-savutesti (Vaihe H).
+
+**Tarkistettu:** `npm run typecheck` ✓, `npm run lint` ✓, `npm run test` ✓ (141/141),
+`npm run test:emulator` ✓ (4/4), `npm run build` ✓. `npm run simulate` ajettu onnistuneesti
+`SWISS_TOURNAMENT`:lla jokaisella `N = 8…20` sekä SPEC:n omalla esimerkillä (N=15,
+osallistujia=8). Koko HTTP-API todennettu curlilla emulaattoria vasten: Swiss-tastingin luonti,
+käynnistys, `ensure-rounds`, tasapelin hylkäys (400), kelvollinen lähetys, järjestäjän
+dashboard oikeilla nimillä ja `totalRounds: null`. Round Robin -polku todennettu regressiona
+samalla ajolla (tasapeli 25–25 edelleen sallittu, eteneminen toimii). Tuotantobundlesta
+vahvistettu ettei mikään palvelinpuolen salaisuus tai `firebase-admin` esiinny.

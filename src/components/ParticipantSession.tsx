@@ -15,12 +15,19 @@ interface ParticipantSession {
   sessionId: string;
 }
 
+const PHASE_LABELS: Record<string, string> = {
+  SEEDING: "alkusarja käynnissä",
+  PLAYOFF: "pudotuspelit käynnissä",
+  DONE: "pudotuspelit käynnissä",
+};
+
 interface MyRoundResponse {
   status: "not_started" | "waiting_service" | "serving" | "done";
   roundId?: string;
   roundIndex?: number;
-  totalRounds: number;
+  totalRounds: number | null;
   completedRounds?: number;
+  phase?: string;
   hasGuessing?: boolean;
   guessOptions?: GuessOption[];
 }
@@ -74,7 +81,11 @@ function TastingCard({ tasting }: { tasting: SanitizedTasting }) {
   } else if (myRound.status === "waiting_service") {
     body = (
       <p className="text-sm text-muted">
-        Odottaa tarjoilua ({myRound.completedRounds}/{myRound.totalRounds})
+        Odottaa tarjoilua (
+        {myRound.totalRounds != null
+          ? `${myRound.completedRounds}/${myRound.totalRounds}`
+          : `${PHASE_LABELS[myRound.phase ?? ""] ?? "käynnissä"}`}
+        )
       </p>
     );
   } else if (myRound.status === "serving") {
@@ -84,6 +95,8 @@ function TastingCard({ tasting }: { tasting: SanitizedTasting }) {
         roundId={myRound.roundId!}
         roundIndex={myRound.roundIndex!}
         totalRounds={myRound.totalRounds}
+        logic={tasting.logic}
+        phase={myRound.phase}
         hasGuessing={Boolean(tasting.hasGuessing)}
         guessOptions={myRound.guessOptions ?? []}
         onSubmitted={handleSubmitted}
@@ -91,7 +104,11 @@ function TastingCard({ tasting }: { tasting: SanitizedTasting }) {
     );
   } else {
     body = (
-      <p className="text-sm text-success">Kaikki {myRound.totalRounds} kierrosta suoritettu.</p>
+      <p className="text-sm text-success">
+        {myRound.totalRounds != null
+          ? `Kaikki ${myRound.totalRounds} kierrosta suoritettu.`
+          : "Valmis! Kaikki kierrokset suoritettu."}
+      </p>
     );
   }
 

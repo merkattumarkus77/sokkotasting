@@ -5,9 +5,19 @@ import { useEffect, useState, type FormEvent } from "react";
 import AdminLoginGate from "@/components/AdminLoginGate";
 import NameListInput from "@/components/NameListInput";
 import { subscribeToActiveEvent } from "@/lib/clientRealtime";
-import { MAX_TASTINGS_PER_EVENT, ROUND_ROBIN_MAX_ITEMS, ROUND_ROBIN_MIN_ITEMS } from "@/lib/limits";
+import {
+  MAX_TASTINGS_PER_EVENT,
+  ROUND_ROBIN_MAX_ITEMS,
+  ROUND_ROBIN_MIN_ITEMS,
+  SEEDING_ROUNDS_DEFAULT,
+  SEEDING_ROUNDS_MAX,
+  SEEDING_ROUNDS_MIN,
+  SWISS_MAX_ITEMS,
+  SWISS_MIN_ITEMS,
+} from "@/lib/limits";
 import { pairsPerParticipantCount } from "@/lib/roundRobin";
-import type { EventDoc, PortionUnit, TastingDoc } from "@/lib/types";
+import { bracketSize } from "@/lib/swissBracket";
+import type { EventDoc, PortionUnit, TastingDoc, TastingLogic } from "@/lib/types";
 
 async function fetchTastings(): Promise<TastingDoc[]> {
   const res = await fetch("/api/tastings");
@@ -27,14 +37,28 @@ function OrganizerCreateEventInner() {
   const [eventError, setEventError] = useState("");
   const [creatingEvent, setCreatingEvent] = useState(false);
 
+  const [logic, setLogic] = useState<TastingLogic>("ROUND_ROBIN");
   const [tastingName, setTastingName] = useState("");
   const [productNames, setProductNames] = useState(["", "", ""]);
   const [portionAmount, setPortionAmount] = useState(30);
   const [portionUnit, setPortionUnit] = useState<PortionUnit>("ml");
   const [guessingEnabled, setGuessingEnabled] = useState(true);
+  const [hasBronzeMatch, setHasBronzeMatch] = useState(false);
+  const [seedingRounds, setSeedingRounds] = useState(SEEDING_ROUNDS_DEFAULT);
   const [tastingError, setTastingError] = useState("");
   const [creatingTasting, setCreatingTasting] = useState(false);
   const [startingId, setStartingId] = useState<string | null>(null);
+
+  const minItems = logic === "ROUND_ROBIN" ? ROUND_ROBIN_MIN_ITEMS : SWISS_MIN_ITEMS;
+  const maxItems = logic === "ROUND_ROBIN" ? ROUND_ROBIN_MAX_ITEMS : SWISS_MAX_ITEMS;
+
+  function handleLogicChange(next: TastingLogic) {
+    setLogic(next);
+    const target = next === "ROUND_ROBIN" ? ROUND_ROBIN_MIN_ITEMS : SWISS_MIN_ITEMS;
+    setProductNames((current) =>
+      current.length >= target ? current : [...current, ...Array(target - current.length).fill("")]
+    );
+  }
 
   useEffect(() => {
     const unsubscribe = subscribeToActiveEvent((event) => {
@@ -93,10 +117,21 @@ function OrganizerCreateEventInner() {
   }
 
   const trimmedProducts = productNames.map((n) => n.trim()).filter(Boolean);
-  const pairsPerParticipant =
-    trimmedProducts.length >= ROUND_ROBIN_MIN_ITEMS
-      ? pairsPerParticipantCount(trimmedProducts.length)
+  const itemCount = trimmedProducts.length;
+
+  // SPEC 10: Round Robin's pairs-per-participant is exact. Swiss's is not
+  // known in advance (depends on how many seeding rounds actually run), so
+  // only the deterministic playoff portion (N-1 matches, +1 for bronze) is
+  // shown, with the seeding stage called out as variable rather than guessed.
+  const roundRobinPairs =
+    logic === "ROUND_ROBIN" && itemCount >= ROUND_ROBIN_MIN_ITEMS
+      ? pairsPerParticipantCount(itemCount)
       : 0;
+  const swissBracketMatches =
+    logic === "SWISS_TOURNAMENT" && itemCount >= SWISS_MIN_ITEMS
+      ? itemCount - 1 + (hasBronzeMatch ? 1 : 0)
+      : 0;
+  const swissSize = itemCount >= SWISS_MIN_ITEMS ? bracketSize(itemCount) : 0;
 
   async function handleCreateTasting(event: FormEvent) {
     event.preventDefault();
@@ -105,11 +140,8 @@ function OrganizerCreateEventInner() {
       setTastingError("Anna tastingille nimi.");
       return;
     }
-    if (
-      trimmedProducts.length < ROUND_ROBIN_MIN_ITEMS ||
-      trimmedProducts.length > ROUND_ROBIN_MAX_ITEMS
-    ) {
-      setTastingError(`Tuotteita on oltava ${ROUND_ROBIN_MIN_ITEMS}–${ROUND_ROBIN_MAX_ITEMS}.`);
+    if (itemCount < minItems || itemCount > maxItems) {
+      setTastingError(`Tuotteita on oltava ${minItems}–${maxItems}.`);
       return;
     }
     if (new Set(trimmedProducts).size !== trimmedProducts.length) {
@@ -123,14 +155,14 @@ function OrganizerCreateEventInner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: tastingName.trim(),
-          logic: "ROUND_ROBIN",
+          logic,
           itemNames: trimmedProducts,
           portionAmount,
           portionUnit,
           hasGuessing: guessingEnabled,
-          hasBronzeMatch: false,
+          hasBronzeMatch: logic === "SWISS_TOURNAMENT" ? hasBronzeMatch : false,
           timeLimitMinutes: null,
-          seedingRounds: 2,
+          seedingRounds: logic === "SWISS_TOURNAMENT" ? seedingRounds : SEEDING_ROUNDS_DEFAULT,
         }),
       });
       const data = await res.json();
@@ -139,7 +171,7 @@ function OrganizerCreateEventInner() {
         return;
       }
       setTastingName("");
-      setProductNames(["", "", ""]);
+      setProductNames(Array(minItems).fill(""));
       setTastings(await fetchTastings());
     } catch {
       setTastingError("Yhteys palvelimeen epäonnistui.");
@@ -260,13 +292,41 @@ function OrganizerCreateEventInner() {
                 />
               </label>
 
+              <div className="flex gap-2">
+                <label className="flex flex-1 items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="logic"
+                    checked={logic === "ROUND_ROBIN"}
+                    onChange={() => handleLogicChange("ROUND_ROBIN")}
+                  />
+                  Round Robin
+                </label>
+                <label className="flex flex-1 items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="logic"
+                    checked={logic === "SWISS_TOURNAMENT"}
+                    onChange={() => handleLogicChange("SWISS_TOURNAMENT")}
+                  />
+                  Sveitsiläinen turnaus
+                </label>
+              </div>
+
               <NameListInput
-                label={`Maisteltavat tuotteet (${ROUND_ROBIN_MIN_ITEMS}–${ROUND_ROBIN_MAX_ITEMS})`}
+                label={`Maisteltavat tuotteet (${minItems}–${maxItems})`}
                 values={productNames}
                 onChange={setProductNames}
                 placeholder="Tuote"
-                minItems={ROUND_ROBIN_MIN_ITEMS}
+                minItems={minItems}
               />
+
+              {logic === "SWISS_TOURNAMENT" && itemCount === SWISS_MAX_ITEMS && (
+                <p className="rounded-lg border border-danger/50 bg-danger/10 p-3 text-sm text-danger">
+                  64 tuotetta tarkoittaa jopa 127 maistelua per osallistuja — käytännössä
+                  mahdotonta yhdessä tilaisuudessa. Harkitse pienempää tuotemäärää.
+                </p>
+              )}
 
               <div className="flex gap-3">
                 <label className="flex flex-1 flex-col gap-1 text-sm">
@@ -301,8 +361,46 @@ function OrganizerCreateEventInner() {
                 Arvausominaisuus päällä
               </label>
 
+              {logic === "SWISS_TOURNAMENT" && (
+                <>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={hasBronzeMatch}
+                      onChange={(e) => setHasBronzeMatch(e.target.checked)}
+                    />
+                    Pronssiottelu päällä
+                  </label>
+                  <label className="flex flex-col gap-1 text-sm">
+                    Alkusarjan vähimmäiskierrokset ({SEEDING_ROUNDS_MIN}–{SEEDING_ROUNDS_MAX})
+                    <input
+                      type="number"
+                      min={SEEDING_ROUNDS_MIN}
+                      max={SEEDING_ROUNDS_MAX}
+                      value={seedingRounds}
+                      onChange={(e) => setSeedingRounds(Number(e.target.value))}
+                      className="w-24 rounded-lg border border-border bg-surface-raised px-3 py-2 outline-none focus:border-accent"
+                    />
+                  </label>
+                </>
+              )}
+
               <div className="rounded-lg border border-border bg-surface-raised p-3 text-sm text-muted">
-                Paria per osallistuja: {pairsPerParticipant || "–"}
+                {logic === "ROUND_ROBIN" ? (
+                  <>Paria per osallistuja: {roundRobinPairs || "–"}</>
+                ) : (
+                  <>
+                    <p>
+                      Pudotuspeliotteluja per osallistuja:{" "}
+                      {itemCount >= SWISS_MIN_ITEMS ? swissBracketMatches : "–"} (kaaviokoko{" "}
+                      {swissSize || "–"})
+                    </p>
+                    <p className="mt-1">
+                      Lisäksi alkusarja, jonka pituus vaihtelee osallistujan arvioiden mukaan —
+                      ei tarkkaa lukua etukäteen.
+                    </p>
+                  </>
+                )}
               </div>
 
               <button

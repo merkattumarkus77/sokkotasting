@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { NOTES_MAX_LENGTH } from "@/lib/limits";
+import type { TastingLogic } from "@/lib/types";
 
 export interface GuessOption {
   id: string;
@@ -9,11 +10,19 @@ export interface GuessOption {
   guessedCount: number;
 }
 
+const PHASE_LABELS: Record<string, string> = {
+  SEEDING: "alkusarja",
+  PLAYOFF: "pudotuspelit",
+  DONE: "pudotuspelit",
+};
+
 interface EvaluationFormProps {
   tastingId: string;
   roundId: string;
   roundIndex: number;
-  totalRounds: number;
+  totalRounds: number | null;
+  logic: TastingLogic;
+  phase?: string;
   hasGuessing: boolean;
   guessOptions: GuessOption[];
   onSubmitted: () => void;
@@ -24,11 +33,14 @@ export default function EvaluationForm({
   roundId,
   roundIndex,
   totalRounds,
+  logic,
+  phase,
   hasGuessing,
   guessOptions,
   onSubmitted,
 }: EvaluationFormProps) {
-  const [pointsA, setPointsA] = useState(25);
+  const isSwiss = logic === "SWISS_TOURNAMENT";
+  const [pointsA, setPointsA] = useState(isSwiss ? 30 : 25);
   const [notes, setNotes] = useState("");
   const [guessAId, setGuessAId] = useState("");
   const [guessBId, setGuessBId] = useState("");
@@ -36,14 +48,21 @@ export default function EvaluationForm({
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setPointsA(25);
+    setPointsA(isSwiss ? 30 : 25);
     setNotes("");
     setGuessAId("");
     setGuessBId("");
     setError("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roundId]);
 
   const pointsB = 50 - pointsA;
+
+  function handlePointsChange(value: number) {
+    // SPEC 6.2: the slider must never rest on 25 (a tie) in Swiss — nudge
+    // it forward rather than let it land there.
+    setPointsA(isSwiss && value === 25 ? 26 : value);
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -81,9 +100,18 @@ export default function EvaluationForm({
     <form onSubmit={handleSubmit} className="flex w-full flex-col gap-5 text-left">
       <div className="text-center">
         <p className="text-xl font-semibold">
-          Kierros {roundIndex + 1}/{totalRounds}
+          Kierros {roundIndex + 1}
+          {totalRounds != null
+            ? `/${totalRounds}`
+            : phase
+              ? ` (${PHASE_LABELS[phase] ?? phase.toLowerCase()})`
+              : ""}
         </p>
-        <p className="text-sm text-muted">Jaa 50 pistettä tuotteiden A ja B kesken.</p>
+        <p className="text-sm text-muted">
+          {isSwiss
+            ? "Jaa 50 pistettä tuotteiden A ja B kesken. Tasapeli ei ole sallittu."
+            : "Jaa 50 pistettä tuotteiden A ja B kesken."}
+        </p>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -100,7 +128,7 @@ export default function EvaluationForm({
           min={0}
           max={50}
           value={pointsA}
-          onChange={(e) => setPointsA(Number(e.target.value))}
+          onChange={(e) => handlePointsChange(Number(e.target.value))}
           className="w-full accent-accent"
           aria-label="Tuote A:n pisteet"
         />

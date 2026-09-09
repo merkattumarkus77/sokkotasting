@@ -6,6 +6,8 @@ import {
   SEEDING_ROUNDS_DEFAULT,
   SEEDING_ROUNDS_MAX,
   SEEDING_ROUNDS_MIN,
+  SWISS_MAX_ITEMS,
+  SWISS_MIN_ITEMS,
 } from "@/lib/limits";
 
 export const LoginSchema = z.discriminatedUnion("mode", [
@@ -37,27 +39,40 @@ export const ParticipantExclusionSchema = z.object({
   excluded: z.boolean(),
 });
 
-// Only ROUND_ROBIN can be created until Vaihe E implements Swiss pairing.
+const baseTastingFields = {
+  name: z.string().trim().min(1).max(200),
+  portionAmount: z.number().positive(),
+  portionUnit: z.enum(["ml", "g"]),
+  hasGuessing: z.boolean(),
+  hasBronzeMatch: z.boolean().default(false),
+  timeLimitMinutes: z.number().int().positive().nullable().default(null),
+  seedingRounds: z
+    .number()
+    .int()
+    .min(SEEDING_ROUNDS_MIN)
+    .max(SEEDING_ROUNDS_MAX)
+    .default(SEEDING_ROUNDS_DEFAULT),
+};
+
 export const CreateTastingSchema = z
-  .object({
-    name: z.string().trim().min(1).max(200),
-    logic: z.literal("ROUND_ROBIN"),
-    itemNames: z
-      .array(z.string().trim().min(1).max(100))
-      .min(ROUND_ROBIN_MIN_ITEMS)
-      .max(ROUND_ROBIN_MAX_ITEMS),
-    portionAmount: z.number().positive(),
-    portionUnit: z.enum(["ml", "g"]),
-    hasGuessing: z.boolean(),
-    hasBronzeMatch: z.boolean().default(false),
-    timeLimitMinutes: z.number().int().positive().nullable().default(null),
-    seedingRounds: z
-      .number()
-      .int()
-      .min(SEEDING_ROUNDS_MIN)
-      .max(SEEDING_ROUNDS_MAX)
-      .default(SEEDING_ROUNDS_DEFAULT),
-  })
+  .discriminatedUnion("logic", [
+    z.object({
+      ...baseTastingFields,
+      logic: z.literal("ROUND_ROBIN"),
+      itemNames: z
+        .array(z.string().trim().min(1).max(100))
+        .min(ROUND_ROBIN_MIN_ITEMS)
+        .max(ROUND_ROBIN_MAX_ITEMS),
+    }),
+    z.object({
+      ...baseTastingFields,
+      logic: z.literal("SWISS_TOURNAMENT"),
+      itemNames: z
+        .array(z.string().trim().min(1).max(100))
+        .min(SWISS_MIN_ITEMS)
+        .max(SWISS_MAX_ITEMS),
+    }),
+  ])
   .refine((input) => new Set(input.itemNames).size === input.itemNames.length, {
     message: "Tuotteiden nimet eivät voi toistua.",
     path: ["itemNames"],
