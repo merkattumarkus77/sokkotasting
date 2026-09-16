@@ -1,0 +1,58 @@
+rules_version = '2';
+
+// SPEC 2.2: all writes go through a Route Handler + firebase-admin (the
+// Admin SDK bypasses these rules). /config is never client-readable or
+// writable.
+//
+// Client reads are allowed for /events/{eventId} (name, category, status)
+// and its /participants subcollection (nickname, session, exclusions) — no
+// product identity lives there, so onSnapshot can drive the organizer's
+// participant list and a participant's own duplicate-login detection.
+//
+// Everything under /events/{eventId}/tastings/** is NOT client-readable —
+// neither the tasting document (TastingItem.name is the real product name,
+// SPEC 5.3), nor its rounds (RoundDoc.itemAId/itemBId are the real item
+// ids — readable together with the tasting's items list they would reveal
+// exactly what SPEC 5.3 forbids), nor participantState (tastedPoints etc.
+// are keyed by real item id, i.e. the results themselves before SPEC 11.3
+// says they may be revealed). There is no Firebase Auth session here to
+// tell an organizer's browser from a participant's browser at the rules
+// layer, so the only way to keep any of this from leaking to anyone who
+// opens devtools is to keep it out of client reach entirely; both roles
+// fetch tasting/round data through role-aware Route Handlers instead
+// (decision 2026-09-06), which poll rather than push for this slice of
+// the UI.
+//
+// This file is NOT deployed to production Firestore at this stage
+// (Vaihe A-D) — it exists for the local emulator until the cutover
+// (docs/CUTOVER.md, Vaihe H) turns it on for real.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /config/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /events/{eventId} {
+      allow read: if true;
+      allow write: if false;
+
+      match /participants/{document=**} {
+        allow read: if true;
+        allow write: if false;
+      }
+
+      match /tastings/{document=**} {
+        allow read, write: if false;
+      }
+    }
+
+    match /categories/{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -12,9 +12,13 @@
 
 # testing
 /coverage
+/test-results/
+/playwright-report/
+/blob-report/
 
 # next.js
 /.next/
+/.next-e2e/
 /out/
 
 # production
@@ -48,3 +52,9 @@ next-env.d.ts
 # salasana
 salasana.txt
 .vercel
+
+# firebase emulator
+firestore-debug.log
+firebase-debug.log
+ui-debug.log
+.firebase/

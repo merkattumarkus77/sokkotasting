@@ -1,77 +1,244 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import EvaluationForm from "@/components/EvaluationForm";
-import { getActiveEvent } from "@/lib/events";
-import { loginParticipant, subscribeToParticipant } from "@/lib/participants";
-import { clearSession, loadSession, saveSession, type StoredSession } from "@/lib/session";
-import type { Participant, TastingEvent } from "@/lib/types";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { createBeepPlayer, type BeepPlayer } from "@/lib/audioBeep";
+import CountdownTimer from "@/components/CountdownTimer";
+import EvaluationForm, { type GuessOption } from "@/components/EvaluationForm";
+import ResultsView, { type ParticipantResultsData } from "@/components/ResultsView";
+import { subscribeToParticipant } from "@/lib/clientRealtime";
+import type { TastingDoc } from "@/lib/types";
 
 type View = "restoring" | "login" | "active";
+type SanitizedTasting = Omit<TastingDoc, "items"> & { excluded: boolean };
+
+interface ParticipantSession {
+  role: "participant";
+  eventId: string;
+  participantId: string;
+  sessionId: string;
+}
+
+const PHASE_LABELS: Record<string, string> = {
+  SEEDING: "alkusarja käynnissä",
+  PLAYOFF: "pudotuspelit käynnissä",
+  DONE: "pudotuspelit käynnissä",
+};
+
+interface MyRoundResponse {
+  status: "not_started" | "waiting_service" | "serving" | "done";
+  roundId?: string;
+  roundIndex?: number;
+  totalRounds: number | null;
+  completedRounds?: number;
+  phase?: string;
+  servedAt?: number | null;
+  hasGuessing?: boolean;
+  guessOptions?: GuessOption[];
+}
+
+interface TastingCardProps {
+  tasting: SanitizedTasting;
+  participantId: string;
+  clockOffsetMs: number;
+  audioGranted: boolean;
+  beepPlayer: BeepPlayer | null;
+}
+
+function TastingCard({ tasting, participantId, clockOffsetMs, audioGranted, beepPlayer }: TastingCardProps) {
+  const [myRound, setMyRound] = useState<MyRoundResponse | null>(null);
+  const [ensuring, setEnsuring] = useState(false);
+  const [results, setResults] = useState<ParticipantResultsData | null>(null);
+
+  const isTimed = tasting.timeLimitMinutes != null;
+  const locked =
+    tasting.status === "in_progress" && !tasting.excluded && isTimed && !audioGranted;
+
+  useEffect(() => {
+    if (tasting.status !== "in_progress" || tasting.excluded || locked) return;
+    let cancelled = false;
+
+    async function poll() {
+      const res = await fetch(`/api/tastings/${tasting.id}/my-round`);
+      if (!res.ok || cancelled) return;
+      setMyRound((await res.json()) as MyRoundResponse);
+    }
+
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [tasting.id, tasting.status, tasting.excluded, locked]);
+
+  useEffect(() => {
+    if (myRound?.status !== "not_started" || ensuring) return;
+    setEnsuring(true);
+    fetch(`/api/tastings/${tasting.id}/ensure-rounds`, { method: "POST" })
+      .then(() => fetch(`/api/tastings/${tasting.id}/my-round`))
+      .then((res) => res.json())
+      .then(setMyRound)
+      .finally(() => setEnsuring(false));
+  }, [myRound?.status, tasting.id, ensuring]);
+
+  function handleSubmitted() {
+    fetch(`/api/tastings/${tasting.id}/my-round`)
+      .then((res) => res.json())
+      .then(setMyRound);
+  }
+
+  useEffect(() => {
+    if (tasting.status !== "completed" || tasting.excluded) return;
+    let cancelled = false;
+    fetch(`/api/tastings/${tasting.id}/results`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setResults({ role: "participant", ownParticipantId: participantId, ...data });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tasting.id, tasting.status, tasting.excluded, participantId]);
+
+  let body: ReactNode;
+
+  if (tasting.excluded) {
+    body = <p className="text-sm text-muted">Et osallistu</p>;
+  } else if (tasting.status === "pending") {
+    body = <p className="text-sm text-muted">Odottaa käynnistystä</p>;
+  } else if (tasting.status === "completed") {
+    body = results ? <ResultsView data={results} /> : <p className="text-sm text-muted">Ladataan tuloksia...</p>;
+  } else if (locked) {
+    body = (
+      <p className="text-sm text-muted">
+        Lukittu (äänilupa puuttuu) — salli äänimerkit yllä olevalla painikkeella jatkaaksesi.
+      </p>
+    );
+  } else if (!myRound || myRound.status === "not_started") {
+    body = <p className="text-sm text-muted">Ladataan...</p>;
+  } else if (myRound.status === "waiting_service") {
+    body = (
+      <p className="text-sm text-muted">
+        Odottaa tarjoilua (
+        {myRound.totalRounds != null
+          ? `${myRound.completedRounds}/${myRound.totalRounds}`
+          : `${PHASE_LABELS[myRound.phase ?? ""] ?? "käynnissä"}`}
+        )
+      </p>
+    );
+  } else if (myRound.status === "serving") {
+    body = (
+      <div className="flex flex-col gap-3">
+        {isTimed && myRound.servedAt != null && (
+          <CountdownTimer
+            servedAtMs={myRound.servedAt}
+            timeLimitMinutes={tasting.timeLimitMinutes!}
+            clockOffsetMs={clockOffsetMs}
+            beepPlayer={beepPlayer}
+          />
+        )}
+        <EvaluationForm
+          tastingId={tasting.id}
+          roundId={myRound.roundId!}
+          roundIndex={myRound.roundIndex!}
+          totalRounds={myRound.totalRounds}
+          logic={tasting.logic}
+          phase={myRound.phase}
+          hasGuessing={Boolean(tasting.hasGuessing)}
+          guessOptions={myRound.guessOptions ?? []}
+          onSubmitted={handleSubmitted}
+        />
+      </div>
+    );
+  } else {
+    body = (
+      <p className="text-sm text-success">
+        {myRound.totalRounds != null
+          ? `Kaikki ${myRound.totalRounds} kierrosta suoritettu.`
+          : "Valmis! Kaikki kierrokset suoritettu."}
+      </p>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-5">
+      <p className="mb-2 font-medium">{tasting.name}</p>
+      {body}
+    </div>
+  );
+}
 
 export default function ParticipantSession() {
   const [view, setView] = useState<View>("restoring");
-  const [participant, setParticipant] = useState<Participant | null>(null);
-  const [event, setEvent] = useState<TastingEvent | null>(null);
+  const [session, setSession] = useState<ParticipantSession | null>(null);
+  const [participantName, setParticipantName] = useState("");
   const [info, setInfo] = useState("");
+  const [clockOffsetMs, setClockOffsetMs] = useState(0);
 
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState("");
 
-  const unsubscribeRef = useRef<(() => void) | null>(null);
+  const [tastings, setTastings] = useState<SanitizedTasting[]>([]);
+  const [beepPlayer, setBeepPlayer] = useState<BeepPlayer | null>(null);
 
   useEffect(() => {
-    return () => unsubscribeRef.current?.();
+    fetch("/api/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (typeof data.serverTime === "number") {
+          setClockOffsetMs(data.serverTime - Date.now());
+        }
+        if (data.session?.role === "participant") {
+          setSession(data.session);
+          setView("active");
+        } else {
+          setView("login");
+        }
+      })
+      .catch(() => setView("login"));
   }, []);
 
   useEffect(() => {
-    async function restore() {
-      const stored = loadSession();
-      if (!stored) {
-        setView("login");
-        return;
-      }
-      try {
-        const activeEvent = await getActiveEvent();
-        if (!activeEvent || activeEvent.id !== stored.eventId) {
-          clearSession();
-          setInfo("Edellinen tasting on päättynyt tai vaihtunut. Kirjaudu uudelleen.");
-          setView("login");
-          return;
-        }
-        setEvent(activeEvent);
-        watchParticipant(stored);
-      } catch {
-        clearSession();
+    if (!session) return;
+    return subscribeToParticipant(session.eventId, session.participantId, (participant) => {
+      if (!participant) return;
+      setParticipantName(participant.name);
+      if (participant.activeSessionId !== session.sessionId) {
+        setInfo("Kirjauduit sisään toisella laitteella, joten tämä istunto suljettiin.");
+        setSession(null);
         setView("login");
       }
+    });
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+
+    async function poll() {
+      const res = await fetch("/api/tastings");
+      if (!res.ok || cancelled) return;
+      const data = await res.json();
+      setTastings(data.tastings);
     }
-    restore();
+
+    poll();
+    const id = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [session]);
+
+  useEffect(() => {
+    return () => beepPlayer?.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function watchParticipant(stored: StoredSession) {
-    unsubscribeRef.current?.();
-    unsubscribeRef.current = subscribeToParticipant(stored.participantId, (p) => {
-      if (!p) {
-        unsubscribeRef.current?.();
-        clearSession();
-        setInfo("Osallistujatietoja ei löytynyt. Kirjaudu uudelleen.");
-        setView("login");
-        return;
-      }
-      if (p.sessionToken !== stored.sessionToken) {
-        unsubscribeRef.current?.();
-        clearSession();
-        setInfo("Kirjauduit sisään toisella laitteella, joten tämä istunto suljettiin.");
-        setView("login");
-        return;
-      }
-      setParticipant(p);
-      setView("active");
-    });
+  function handleAllowSound() {
+    setBeepPlayer(createBeepPlayer());
   }
 
   async function handleLogin(event: FormEvent) {
@@ -79,32 +246,36 @@ export default function ParticipantSession() {
     setLoggingIn(true);
     setLoginError("");
     try {
-      const result = await loginParticipant(name, password);
-      const stored: StoredSession = {
-        eventId: result.event.id,
-        participantId: result.participant.id,
-        participantName: result.participant.name,
-        sessionToken: result.sessionToken,
-      };
-      saveSession(stored);
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "participant", nickname: name, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error ?? "Kirjautuminen epäonnistui.");
+        return;
+      }
       setInfo("");
-      setEvent(result.event);
-      watchParticipant(stored);
-    } catch (error) {
-      setLoginError(error instanceof Error ? error.message : "Kirjautuminen epäonnistui.");
+      const me = await fetch("/api/me").then((r) => r.json());
+      if (typeof me.serverTime === "number") {
+        setClockOffsetMs(me.serverTime - Date.now());
+      }
+      setSession(me.session);
+      setView("active");
+    } catch {
+      setLoginError("Yhteys palvelimeen epäonnistui.");
     } finally {
       setLoggingIn(false);
     }
   }
 
-  function handleLogout() {
-    unsubscribeRef.current?.();
-    clearSession();
-    setParticipant(null);
-    setEvent(null);
-    setInfo("");
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setSession(null);
     setName("");
     setPassword("");
+    setInfo("");
     setView("login");
   }
 
@@ -148,58 +319,52 @@ export default function ParticipantSession() {
     );
   }
 
-  if (!participant || !event) return null;
+  if (!session) return null;
 
-  const totalRounds = participant.rounds.length;
-  const currentRound =
-    participant.currentRoundIndex < totalRounds
-      ? participant.rounds[participant.currentRoundIndex]
-      : null;
-
-  if (currentRound && currentRound.served && !currentRound.completed) {
-    return (
-      <div className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-surface p-6">
-        <EvaluationForm participant={participant} event={event} round={currentRound} />
-        <button
-          type="button"
-          onClick={handleLogout}
-          className="self-center text-sm text-muted underline underline-offset-4"
-        >
-          Kirjaudu ulos
-        </button>
-      </div>
-    );
-  }
+  // SPEC 9: only ask for audio permission when it would actually matter —
+  // at least one timed tasting the participant isn't excluded from is live.
+  const needsAudioPermission =
+    !beepPlayer &&
+    tastings.some((t) => t.status === "in_progress" && !t.excluded && t.timeLimitMinutes != null);
 
   return (
-    <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-xl border border-border bg-surface p-6 text-center">
-      <div>
+    <div className="flex w-full max-w-sm flex-col gap-4">
+      <div className="text-center">
         <p className="text-sm text-muted">Kirjautunut nimellä</p>
-        <p className="text-lg font-medium">{participant.name}</p>
+        <p className="text-lg font-medium">{participantName}</p>
       </div>
 
-      {!currentRound && (
-        <p className="text-success">
-          Kaikki {totalRounds} kierrosta suoritettu. Kiitos osallistumisesta!
-        </p>
+      {needsAudioPermission && (
+        <button
+          type="button"
+          onClick={handleAllowSound}
+          className="rounded-lg border border-accent px-4 py-2 text-sm font-medium text-accent hover:bg-accent/10"
+        >
+          Salli äänimerkit
+        </button>
       )}
 
-      {currentRound && !currentRound.served && (
-        <>
-          <p className="text-xl font-semibold">
-            {participant.currentRoundIndex === 0 ? "Odottaa maistiaisia" : "Odottaa seuraavaa kierrosta"}
-          </p>
-          <p className="text-sm text-muted">
-            Kierros {currentRound.index + 1}/{totalRounds}. Odota, että järjestäjä tarjoilee
-            seuraavat näytteet.
-          </p>
-        </>
+      {tastings.length === 0 && (
+        <p className="text-center text-sm text-muted">Ei vielä tastingeja tässä tapahtumassa.</p>
       )}
+
+      <div className="flex flex-col gap-4">
+        {tastings.map((tasting) => (
+          <TastingCard
+            key={tasting.id}
+            tasting={tasting}
+            participantId={session.participantId}
+            clockOffsetMs={clockOffsetMs}
+            audioGranted={Boolean(beepPlayer)}
+            beepPlayer={beepPlayer}
+          />
+        ))}
+      </div>
 
       <button
         type="button"
         onClick={handleLogout}
-        className="text-sm text-muted underline underline-offset-4"
+        className="self-center text-sm text-muted underline underline-offset-4"
       >
         Kirjaudu ulos
       </button>
