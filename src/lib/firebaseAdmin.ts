@@ -9,12 +9,27 @@ import { EMULATOR_PROJECT_ID } from "@/lib/limits";
 // paikalliseen emulaattoriin eikä palvelutilin avainta tarvita. Muuten
 // yhteys tuotanto-Firestoreen palvelutilin avaimella (ei koskaan
 // selainbundleen — tätä moduulia ei saa importoida "use client"-tiedostoista).
+//
+// Kaksi tapaa antaa palvelutilin avain, koska Vercelissä ei ole pysyvää
+// tiedostojärjestelmää johon serviceAccountKey.json voisi jättää:
+// - FIREBASE_SERVICE_ACCOUNT_JSON (base64-koodattu avaimen JSON-sisältö) —
+//   Vercelin ympäristömuuttuja, ks. docs/CUTOVER.md Vaihe 4.
+// - Muuten tiedostopolusta (FIREBASE_SERVICE_ACCOUNT_PATH tai oletuksena
+//   serviceAccountKey.json) — paikallinen kehitys ja skriptit.
 
 function loadAdminApp(): App {
   if (getApps().length) return getApps()[0]!;
 
   if (process.env.FIRESTORE_EMULATOR_HOST) {
     return initializeApp({ projectId: EMULATOR_PROJECT_ID });
+  }
+
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    const decoded = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_JSON, "base64").toString(
+      "utf-8"
+    );
+    const serviceAccount = JSON.parse(decoded);
+    return initializeApp({ credential: cert(serviceAccount) });
   }
 
   const serviceAccountPath = resolve(
