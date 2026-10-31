@@ -4,7 +4,7 @@ import { handleApiError } from "@/lib/apiResponse";
 import { getActiveEvent } from "@/lib/events";
 import { listParticipants } from "@/lib/participants";
 import { pairsPerParticipantCount } from "@/lib/roundRobin";
-import { getCurrentRound, getParticipantState } from "@/lib/rounds";
+import { getParticipantState, getRoundAtIndex } from "@/lib/rounds";
 import { getTasting } from "@/lib/tastings";
 import type { ParticipantTastingState, TastingDoc } from "@/lib/types";
 
@@ -56,7 +56,12 @@ export async function GET(
             };
           }
 
-          const round = await getCurrentRound(event.id, tastingId, participant.id);
+          const round = await getRoundAtIndex(
+            event.id,
+            tastingId,
+            participant.id,
+            state.currentRoundIndex
+          );
           if (!round) {
             return {
               ...base,

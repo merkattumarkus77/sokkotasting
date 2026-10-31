@@ -6,6 +6,7 @@ import CountdownTimer from "@/components/CountdownTimer";
 import EvaluationForm, { type GuessOption } from "@/components/EvaluationForm";
 import ResultsView, { type ParticipantResultsData } from "@/components/ResultsView";
 import { subscribeToParticipant } from "@/lib/clientRealtime";
+import { usePolling } from "@/lib/usePolling";
 import type { TastingDoc } from "@/lib/types";
 
 type View = "restoring" | "login" | "active";
@@ -53,23 +54,23 @@ function TastingCard({ tasting, participantId, clockOffsetMs, audioGranted, beep
   const locked =
     tasting.status === "in_progress" && !tasting.excluded && isTimed && !audioGranted;
 
-  useEffect(() => {
-    if (tasting.status !== "in_progress" || tasting.excluded || locked) return;
-    let cancelled = false;
+  // Only the "waiting for the organizer to serve" states need a quick poll; while
+  // serving the participant submits themselves (handleSubmitted refetches), and a
+  // finished participant needs none.
+  const pollEnabled = tasting.status === "in_progress" && !tasting.excluded && !locked;
+  const myRoundIntervalMs = !pollEnabled
+    ? null
+    : myRound?.status === "done"
+      ? null
+      : myRound?.status === "serving"
+        ? 20000
+        : 5000;
 
-    async function poll() {
-      const res = await fetch(`/api/tastings/${tasting.id}/my-round`);
-      if (!res.ok || cancelled) return;
-      setMyRound((await res.json()) as MyRoundResponse);
-    }
-
-    poll();
-    const id = setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [tasting.id, tasting.status, tasting.excluded, locked]);
+  usePolling(async () => {
+    const res = await fetch(`/api/tastings/${tasting.id}/my-round`);
+    if (!res.ok) return;
+    setMyRound((await res.json()) as MyRoundResponse);
+  }, myRoundIntervalMs);
 
   useEffect(() => {
     if (myRound?.status !== "not_started" || ensuring) return;
@@ -213,24 +214,12 @@ export default function ParticipantSession() {
     });
   }, [session]);
 
-  useEffect(() => {
-    if (!session) return;
-    let cancelled = false;
-
-    async function poll() {
-      const res = await fetch("/api/tastings");
-      if (!res.ok || cancelled) return;
-      const data = await res.json();
-      setTastings(data.tastings);
-    }
-
-    poll();
-    const id = setInterval(poll, 4000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [session]);
+  usePolling(async () => {
+    const res = await fetch("/api/tastings");
+    if (!res.ok) return;
+    const data = await res.json();
+    setTastings(data.tastings);
+  }, session ? 10000 : null);
 
   useEffect(() => {
     return () => beepPlayer?.close();

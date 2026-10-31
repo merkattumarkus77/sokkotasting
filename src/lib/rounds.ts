@@ -213,6 +213,18 @@ export async function getParticipantState(
   return doc.data() as ParticipantTastingState;
 }
 
+/** Reads the round at a known index (callers that already hold the state avoid a second state read). */
+export async function getRoundAtIndex(
+  eventId: string,
+  tastingId: string,
+  participantId: string,
+  roundIndex: number
+): Promise<RoundDoc | null> {
+  const doc = await roundsRef(eventId, tastingId).doc(roundDocId(participantId, roundIndex)).get();
+  if (!doc.exists) return null;
+  return { id: doc.id, ...doc.data() } as RoundDoc;
+}
+
 /** The round a participant is currently on, or null once all are submitted. */
 export async function getCurrentRound(
   eventId: string,
@@ -221,11 +233,7 @@ export async function getCurrentRound(
 ): Promise<RoundDoc | null> {
   const state = await getParticipantState(eventId, tastingId, participantId);
   if (!state) return null;
-  const doc = await roundsRef(eventId, tastingId)
-    .doc(roundDocId(participantId, state.currentRoundIndex))
-    .get();
-  if (!doc.exists) return null;
-  return { id: doc.id, ...doc.data() } as RoundDoc;
+  return getRoundAtIndex(eventId, tastingId, participantId, state.currentRoundIndex);
 }
 
 /**

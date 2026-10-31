@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireActiveParticipant } from "@/lib/apiAuth";
 import { handleApiError } from "@/lib/apiResponse";
 import { pairsPerParticipantCount } from "@/lib/roundRobin";
-import { getCurrentRound, getGuessCounts, getParticipantState } from "@/lib/rounds";
+import { getGuessCounts, getParticipantState, getRoundAtIndex } from "@/lib/rounds";
 import { getTasting } from "@/lib/tastings";
 
 // Participant-only. Never includes itemAId/itemBId or which item is A/B —
@@ -51,7 +51,12 @@ export async function GET(
       });
     }
 
-    const round = await getCurrentRound(session.eventId, tastingId, session.participantId);
+    const round = await getRoundAtIndex(
+      session.eventId,
+      tastingId,
+      session.participantId,
+      state.currentRoundIndex
+    );
     if (!round) {
       return NextResponse.json({
         status: "done",

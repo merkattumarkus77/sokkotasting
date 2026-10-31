@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import AdminLoginGate from "@/components/AdminLoginGate";
 import ResultsView, { type AdminResultsData } from "@/components/ResultsView";
 import { subscribeToActiveEvent, subscribeToEventParticipants } from "@/lib/clientRealtime";
+import { usePolling } from "@/lib/usePolling";
 import type { EventDoc, ParticipantDoc, TastingDoc } from "@/lib/types";
 
 type EntryStatus = "not_started" | "waiting_service" | "tasting" | "done";
@@ -78,24 +79,13 @@ function OrganizerDashboardInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeEvent?.id]);
 
-  useEffect(() => {
-    if (!selectedTastingId) return;
-    let cancelled = false;
-
-    async function poll() {
-      const res = await fetch(`/api/tastings/${selectedTastingId}/dashboard`);
-      if (!res.ok || cancelled) return;
-      const data = await res.json();
-      setEntries(data.entries);
-    }
-
-    poll();
-    const id = setInterval(poll, 4000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [selectedTastingId]);
+  // Each poll reads ~2 Firestore docs per participant (Spark: 50k reads/day).
+  usePolling(async () => {
+    const res = await fetch(`/api/tastings/${selectedTastingId}/dashboard`);
+    if (!res.ok) return;
+    const data = await res.json();
+    setEntries(data.entries);
+  }, selectedTastingId ? 10000 : null);
 
   async function handleServe(participantId: string, roundId: string) {
     if (!selectedTastingId) return;
